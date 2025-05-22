@@ -5,7 +5,8 @@ builds:
     main: ./main.go
     ldflags:
       - -s -w
-      - -X github.com/sviridovkonstantin42/try-catch-lib/internal/revision/revision.go={{ .Version }}
+      - -X github.com/sviridovkonstantin42/try-catch-lib/internal/revision.Revision={{ .Version }}
+
     env:
       - CGO_ENABLED=0
     goos:
