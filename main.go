@@ -1,7 +1,7 @@
 package main
 
 import (
-	"sviridovkonstantin42/trycatch/cmd"
+	"github.com/sviridovkonstantin42/godsl/cmd"
 )
 
 func main() {

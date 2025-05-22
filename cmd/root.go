@@ -3,7 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"sviridovkonstantin42/trycatch/internal/revision"
+
+	"github.com/sviridovkonstantin42/godsl/internal/revision"
 
 	"github.com/spf13/cobra"
 )
