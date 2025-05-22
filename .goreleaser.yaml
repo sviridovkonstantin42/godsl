@@ -5,7 +5,7 @@ builds:
     main: ./main.go
     ldflags:
       - -s -w
-      - -X github.com/sviridovkonstantin42/godsl/internal/revision.Revision=1.2.3={{ .Version }}
+      - -X github.com/sviridovkonstantin42/godsl/internal/revision.Revision={{ .Version }}
 
     env:
       - CGO_ENABLED=0
