@@ -1,6 +1,6 @@
 set -e
 
-REPO="sviridovkonstantin42/try-catch-lib"
+REPO="sviridovkonstantin42/godsl"
 BINARY_NAME="godsl"
 INSTALL_DIR="/usr/local/bin"
 
