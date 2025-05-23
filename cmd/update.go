@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -147,8 +148,8 @@ func downloadLatestRealese(ctx context.Context, client *github.Client, platform,
 	downloadUrl := asset.BrowserDownloadURL
 
 	tempDir := os.TempDir()
-	outputFile := filepath.Join(tempDir, *asset.Name)
-	out, err := os.Create(outputFile)
+	zipFile := filepath.Join(tempDir, *asset.Name)
+	out, err := os.Create(zipFile)
 	if err != nil {
 		return "", fmt.Errorf("не удалось создать временный файл: %v", err)
 	}
@@ -174,14 +175,21 @@ func downloadLatestRealese(ctx context.Context, client *github.Client, platform,
 		return "", fmt.Errorf("ошибка при сохранении файла: %v", err)
 	}
 
+	err = exec.Command("tar", "--no-same-owner", "-xzf", zipFile, "-C", tempDir).Run()
+	if err != nil {
+		return "", err
+	}
+
+	execFile := filepath.Join(tempDir, "godsl")
+
 	if runtime.GOOS != "windows" {
-		err = os.Chmod(outputFile, 0755)
+		err = os.Chmod(execFile, 0755)
 		if err != nil {
 			return "", fmt.Errorf("не удалось установить права на выполнение: %v", err)
 		}
 	}
 
-	return outputFile, nil
+	return execFile, nil
 }
 
 func matchesTarget(filename, targetOS, targetArch string) bool {
