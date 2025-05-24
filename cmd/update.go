@@ -23,16 +23,12 @@ var updateCmd = &cobra.Command{
 	Run: func(_ *cobra.Command, _ []string) {
 		ctx := context.Background()
 
-		newVersion, err := update(ctx)
+		fmt.Println("Начало обновления...")
+
+		err := update(ctx)
 		if err != nil {
 			fmt.Printf("Ошибка при обновлении: %v\n", err)
 			return
-		}
-
-		if newVersion != "" {
-			fmt.Printf("Обновился с %v на %v!\nРекомендую перегенерировать код командой 'godsl generate' \n",
-				revision.Revision, newVersion)
-
 		}
 	},
 }
@@ -41,39 +37,42 @@ func init() {
 	rootCmd.AddCommand(updateCmd)
 }
 
-func update(ctx context.Context) (newVersion string, err error) {
+func update(ctx context.Context) (err error) {
 	client := github.NewClient(nil)
 	latestTag, err := getLatestTag(ctx, client, consts.OWNER, consts.REPOSITORY)
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	if latestTag == revision.Revision {
+	if latestTag == ("v" + revision.Revision) {
 		fmt.Println("Используется самая свежая версия.")
-		return "", nil
+		return nil
 	}
+
+	fmt.Printf("Обновление на %v...\nРекомендую перегенерировать код после обновления командой 'godsl generate' \n",
+		latestTag)
 
 	platform, err := getPlatform()
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	archType, err := getArchType()
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	downloadedLatestRelease, err := downloadLatestRealese(ctx, client, platform, archType)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	executable, err := os.Executable()
 	if err != nil {
-		return "", err
+		return err
 	}
 
-	return newVersion, os.Rename(downloadedLatestRelease, executable)
+	return os.Rename(downloadedLatestRelease, executable)
 }
 
 func getLatestTag(ctx context.Context, client *github.Client, owner, repo string) (string, error) {
