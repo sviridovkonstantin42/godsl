@@ -1045,20 +1045,6 @@ func (p *Parser) parseExpressionList(end lexer.TokenType) []Expression {
 	return args
 }
 
-func (p *Parser) IntegerLiteral() Expression {
-	lit := &IntegerLiteral{Token: p.curToken}
-
-	value, err := strconv.ParseInt(p.curToken.Literal, 0, 64)
-	if err != nil {
-		msg := fmt.Sprintf("could not parse %q as integer", p.curToken.Literal)
-		p.errors = append(p.errors, msg)
-		return nil
-	}
-
-	lit.Value = value
-	return lit
-}
-
 func (p *Parser) parseFloatLiteral() Expression {
 	lit := &FloatLiteral{Token: p.curToken}
 
@@ -1150,10 +1136,6 @@ func (p *Parser) parseDefineStatement() Statement {
 	p.nextToken()
 
 	stmt.Value = p.parseExpression(LOWEST)
-
-	if p.peekTokenIs(lexer.SEMICOLON) {
-		p.nextToken()
-	}
 
 	return stmt
 }

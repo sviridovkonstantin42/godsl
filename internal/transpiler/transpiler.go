@@ -301,7 +301,7 @@ func (t *Transpiler) transpileTryStatement(stmt *parser.TryStatement) string {
 	t.errorVarCounter++
 
 	// Создаем анонимную функцию для try блока
-	result.WriteString(t.indent() + fmt.Sprintf("err := func() error {\n"))
+	result.WriteString(t.indent() + "err := func() error {\n")
 	t.indentLevel++
 
 	// Транспилируем содержимое try блока
