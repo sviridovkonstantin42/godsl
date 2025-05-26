@@ -1,5 +1,0 @@
-package cat
-import "fmt"
-func Catcat() {
-	fmt.Println("go go cat!")
-}
