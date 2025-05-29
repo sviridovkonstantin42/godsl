@@ -1,467 +1,332 @@
+// internal/transpiler/transpiler.go
 package transpiler
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
-	"github.com/sviridovkonstantin42/godsl/internal/lexer"
+	"github.com/sviridovkonstantin42/godsl/internal/format"
+
+	"github.com/sviridovkonstantin42/godsl/internal/ast"
+
 	"github.com/sviridovkonstantin42/godsl/internal/parser"
+
+	"github.com/sviridovkonstantin42/godsl/internal/token"
 )
 
-// Transpiler структура для транспиляции GoDSL в Go
+// TranspileFile транспилирует GoDSL код в стандартный Go
+func TranspileFile(source string) (string, error) {
+	transpiler := NewTranspiler()
+	return transpiler.Transpile(source)
+}
+
+// Transpiler преобразует GoDSL в Go код
 type Transpiler struct {
-	errorHandlingEnabled bool
-	currentFunction      string
-	errorVarCounter      int
-	indentLevel          int
+	fset          *token.FileSet
+	currentTry    *TryContext
+	tryStack      []*TryContext
+	checkErrRegex *regexp.Regexp
 }
 
-// New создает новый транспилятор
-func New() *Transpiler {
+// TryContext содержит информацию о текущем try блоке
+type TryContext struct {
+	catchBlock *ast.BlockStmt
+	depth      int
+}
+
+// NewTranspiler создает новый транспилятор
+func NewTranspiler() *Transpiler {
 	return &Transpiler{
-		errorHandlingEnabled: true,
-		errorVarCounter:      0,
-		indentLevel:          0,
+		fset:          token.NewFileSet(),
+		tryStack:      make([]*TryContext, 0),
+		checkErrRegex: regexp.MustCompile(`//\s*checkerr\s*$`),
 	}
 }
 
-// TranspileProgram транспилирует AST программы в Go код
-func (t *Transpiler) TranspileProgram(program *parser.Program) string {
-	var result strings.Builder
-
-	// Добавляем стандартные импорты для обработки ошибок если нужно
-	needsErrorHandling := t.programNeedsErrorHandling(program)
-	if needsErrorHandling {
-		result.WriteString("import (\n")
-		result.WriteString("\t\"errors\"\n")
-		result.WriteString("\t\"fmt\"\n")
-		result.WriteString(")\n\n")
+// Transpile выполняет транспиляцию исходного кода
+func (t *Transpiler) Transpile(source string) (string, error) {
+	// Предварительная обработка try-catch блоков
+	processedSource, err := t.preprocessTryCatch(source)
+	if err != nil {
+		return "", fmt.Errorf("preprocessing error: %v", err)
 	}
 
-	for i, stmt := range program.Statements {
-		transpiled := t.transpileStatement(stmt)
-		result.WriteString(transpiled)
+	// Парсим обработанный код
+	file, err := parser.ParseFile(t.fset, "", processedSource, parser.ParseComments)
+	if err != nil {
+		return "", fmt.Errorf("parsing error: %v", err)
+	}
 
-		// Добавляем перенос строки между statements, кроме последнего
-		if i < len(program.Statements)-1 {
-			result.WriteString("\n")
+	// Трансформируем AST
+	t.transformAST(file)
+
+	// Генерируем финальный код
+	return t.generateCode(file)
+}
+
+// preprocessTryCatch обрабатывает try-catch блоки в исходном коде
+func (t *Transpiler) preprocessTryCatch(source string) (string, error) {
+	lines := strings.Split(source, "\n")
+	result := make([]string, 0, len(lines))
+
+	tryStack := make([]TryBlock, 0)
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Обработка try блоков
+		if strings.HasPrefix(trimmed, "try {") || trimmed == "try {" {
+			tryBlock := TryBlock{
+				StartLine: i,
+				Depth:     len(tryStack),
+				Lines:     make([]string, 0),
+			}
+			tryStack = append(tryStack, tryBlock)
+			result = append(result, "{ // TRY_START")
+			continue
+		}
+
+		// Обработка catch блоков
+		if strings.HasPrefix(trimmed, "catch {") || trimmed == "catch {" {
+			if len(tryStack) == 0 {
+				return "", fmt.Errorf("catch without try at line %d", i+1)
+			}
+
+			currentTry := &tryStack[len(tryStack)-1]
+			currentTry.HasCatch = true
+			currentTry.CatchStart = i
+			result = append(result, "{ // CATCH_START")
+			continue
+		}
+
+		// Обработка закрывающих скобок
+		if trimmed == "}" && len(tryStack) > 0 {
+			currentTry := &tryStack[len(tryStack)-1]
+			if !currentTry.HasCatch {
+				// Конец try блока без catch
+				result = append(result, "} // TRY_END_NO_CATCH")
+				tryStack = tryStack[:len(tryStack)-1]
+			} else if currentTry.CatchStart > 0 && len(currentTry.CatchLines) == 0 {
+				// Начинаем собирать строки catch блока
+				currentTry.CatchLines = make([]string, 0)
+				result = append(result, "} // CATCH_END")
+				tryStack = tryStack[:len(tryStack)-1]
+			} else {
+				result = append(result, line)
+			}
+			continue
+		}
+
+		result = append(result, line)
+	}
+
+	if len(tryStack) > 0 {
+		return "", fmt.Errorf("unclosed try block")
+	}
+
+	return strings.Join(result, "\n"), nil
+}
+
+// TryBlock представляет try блок в исходном коде
+type TryBlock struct {
+	StartLine  int
+	Depth      int
+	Lines      []string
+	HasCatch   bool
+	CatchStart int
+	CatchLines []string
+}
+
+// transformAST трансформирует AST для обработки //checkerr комментариев
+func (t *Transpiler) transformAST(file *ast.File) {
+	ast.Inspect(file, func(node ast.Node) bool {
+		switch n := node.(type) {
+		case *ast.BlockStmt:
+			t.transformBlockStmt(n)
+		}
+		return true
+	})
+}
+
+// transformBlockStmt обрабатывает блок statements
+func (t *Transpiler) transformBlockStmt(block *ast.BlockStmt) {
+	newStmts := make([]ast.Stmt, 0, len(block.List)*2)
+
+	for _, stmt := range block.List {
+		newStmts = append(newStmts, stmt)
+
+		// Проверяем комментарии после statement
+		// if t.hasCheckErrComment(stmt, block, i) {
+		// 	errorCheck := t.generateErrorCheck()
+		// 	newStmts = append(newStmts, errorCheck)
+		// }
+	}
+
+	block.List = newStmts
+}
+
+// hasCheckErrComment проверяет наличие комментария //checkerr
+// func (t *Transpiler) hasCheckErrComment(stmt ast.Stmt, block *ast.BlockStmt, index int) bool {
+// 	// Получаем позицию statement
+// 	stmtPos := t.fset.Position(stmt.Pos())
+// 	stmtEnd := t.fset.Position(stmt.End())
+
+// 	// Ищем комментарий на той же строке
+// 	for _, commentGroup := range t.fset.Comments {
+// 		if commentGroup == nil {
+// 			continue
+// 		}
+
+// 		for _, comment := range commentGroup.List {
+// 			commentPos := t.fset.Position(comment.Pos())
+
+// 			// Проверяем, что комментарий на той же строке
+// 			if commentPos.Line == stmtEnd.Line {
+// 				return t.checkErrRegex.MatchString(comment.Text)
+// 			}
+// 		}
+// 	}
+
+// 	return false
+// }
+
+// generateErrorCheck создает проверку if err != nil
+func (t *Transpiler) generateErrorCheck() ast.Stmt {
+	// Создаем условие: err != nil
+	condition := &ast.BinaryExpr{
+		X:  &ast.Ident{Name: "err"},
+		Op: token.NEQ,
+		Y:  &ast.Ident{Name: "nil"},
+	}
+
+	// Создаем тело if блока
+	var body *ast.BlockStmt
+
+	if t.currentTry != nil && t.currentTry.catchBlock != nil {
+		// Используем код из catch блока
+		body = t.currentTry.catchBlock
+	} else {
+		// Стандартная обработка - return err
+		body = &ast.BlockStmt{
+			List: []ast.Stmt{
+				&ast.ReturnStmt{
+					Results: []ast.Expr{
+						&ast.Ident{Name: "err"},
+					},
+				},
+			},
 		}
 	}
 
-	return result.String()
+	return &ast.IfStmt{
+		Cond: condition,
+		Body: body,
+	}
 }
 
-// programNeedsErrorHandling проверяет, нужна ли обработка ошибок
-func (t *Transpiler) programNeedsErrorHandling(program *parser.Program) bool {
-	for _, stmt := range program.Statements {
-		if t.statementNeedsErrorHandling(stmt) {
-			return true
+// generateCode генерирует финальный Go код
+func (t *Transpiler) generateCode(file *ast.File) (string, error) {
+	var buf strings.Builder
+
+	err := format.Node(&buf, t.fset, file)
+	if err != nil {
+		return "", fmt.Errorf("code generation error: %v", err)
+	}
+
+	code := buf.String()
+
+	// Постобработка сгенерированного кода
+	code = t.postprocessCode(code)
+
+	return code, nil
+}
+
+// postprocessCode выполняет финальную обработку кода
+func (t *Transpiler) postprocessCode(code string) string {
+	// Убираем служебные комментарии
+	code = strings.ReplaceAll(code, "// TRY_START", "")
+	code = strings.ReplaceAll(code, "// CATCH_START", "")
+	code = strings.ReplaceAll(code, "// TRY_END_NO_CATCH", "")
+	code = strings.ReplaceAll(code, "// CATCH_END", "")
+
+	// Очищаем лишние пустые строки
+	lines := strings.Split(code, "\n")
+	result := make([]string, 0, len(lines))
+
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" || len(result) == 0 || strings.TrimSpace(result[len(result)-1]) != "" {
+			result = append(result, line)
 		}
 	}
-	return false
+
+	return strings.Join(result, "\n")
 }
 
-func (t *Transpiler) statementNeedsErrorHandling(stmt parser.Statement) bool {
+// Дополнительные утилиты для работы с AST
+
+// findErrorVariable находит переменную ошибки в assignment
+func (t *Transpiler) findErrorVariable(stmt ast.Stmt) string {
 	switch s := stmt.(type) {
-	case *parser.TryStatement:
-		return true
-	case *parser.ThrowStatement:
-		return true
-	case *parser.FunctionStatement:
-		return t.blockNeedsErrorHandling(s.Body)
-	case *parser.BlockStatement:
-		return t.blockNeedsErrorHandling(s)
-	case *parser.IfStatement:
-		return t.blockNeedsErrorHandling(s.Consequence) ||
-			(s.Alternative != nil && t.blockNeedsErrorHandling(s.Alternative))
-	case *parser.ForStatement:
-		return t.blockNeedsErrorHandling(s.Body)
+	case *ast.AssignStmt:
+		for _, lhs := range s.Lhs {
+			if ident, ok := lhs.(*ast.Ident); ok {
+				if ident.Name == "err" {
+					return "err"
+				}
+			}
+		}
 	}
-	return false
+	return "err" // по умолчанию
 }
 
-func (t *Transpiler) blockNeedsErrorHandling(block *parser.BlockStatement) bool {
-	if block == nil {
+// isErrorReturningCall проверяет, возвращает ли вызов ошибку
+func (t *Transpiler) isErrorReturningCall(expr ast.Expr) bool {
+	switch e := expr.(type) {
+	case *ast.CallExpr:
+		return true // предполагаем, что все вызовы могут вернуть ошибку
+	default:
+		_ = e
 		return false
 	}
-	for _, stmt := range block.Statements {
-		if t.statementNeedsErrorHandling(stmt) {
-			return true
-		}
-	}
-	return false
 }
 
-// transpileStatement транспилирует statement
-func (t *Transpiler) transpileStatement(stmt parser.Statement) string {
-	switch s := stmt.(type) {
-	case *parser.PackageStatement:
-		return t.transpilePackageStatement(s)
-	case *parser.ImportStatement:
-		return t.transpileImportStatement(s)
-	case *parser.VarStatement:
-		return t.transpileVarStatement(s)
-	case *parser.ConstStatement:
-		return t.transpileConstStatement(s)
-	case *parser.FunctionStatement:
-		return t.transpileFunctionStatement(s)
-	case *parser.ReturnStatement:
-		return t.transpileReturnStatement(s)
-	case *parser.IfStatement:
-		return t.transpileIfStatement(s)
-	case *parser.ForStatement:
-		return t.transpileForStatement(s)
-	case *parser.TryStatement:
-		return t.transpileTryStatement(s)
-	case *parser.ThrowStatement:
-		return t.transpileThrowStatement(s)
-	case *parser.ExpressionStatement:
-		return t.transpileExpressionStatement(s)
-	case *parser.BlockStatement:
-		return t.transpileBlockStatement(s)
-	case *parser.AssignStatement:
-		return t.transpileAssignStatement(s)
-	case *parser.CommentStatement:
-		return t.transpileCommentStatement(s)
-	case *parser.IncrementStatement:
-		return t.transpileIncrementStatement(s)
-	case *parser.DefineStatement:
-		return t.transpileDefineStatement(s)
-	default:
-		return fmt.Sprintf("// Unknown statement type: %T", s)
+// createReturnStmt создает return statement с ошибкой
+func (t *Transpiler) createReturnStmt(errorVar string) *ast.ReturnStmt {
+	return &ast.ReturnStmt{
+		Results: []ast.Expr{
+			&ast.Ident{Name: errorVar},
+		},
 	}
 }
 
-func (t *Transpiler) transpileCommentStatement(stmt *parser.CommentStatement) string {
-	if stmt.IsMultiLine {
-		return t.indent() + "/*" + stmt.Value + "*/"
-	}
-
-	return t.indent() + "// " + stmt.Value
+// Enhanced version with better comment handling
+type CommentProcessor struct {
+	fset     *token.FileSet
+	comments []*ast.CommentGroup
 }
 
-func (t *Transpiler) transpileIncrementStatement(expr *parser.IncrementStatement) string {
-	return t.indent() + expr.String()
-}
-
-func (t *Transpiler) transpilePackageStatement(stmt *parser.PackageStatement) string {
-	return fmt.Sprintf("package %s", stmt.Value)
-}
-
-func (t *Transpiler) transpileImportStatement(stmt *parser.ImportStatement) string {
-	if len(stmt.Imports) == 1 {
-		return fmt.Sprintf("import \"%s\"", stmt.Imports[0])
-	}
-
-	var result strings.Builder
-	result.WriteString("import (\n")
-	for _, imp := range stmt.Imports {
-		result.WriteString(fmt.Sprintf("\t\"%s\"\n", imp))
-	}
-	result.WriteString(")")
-	return result.String()
-}
-
-func (t *Transpiler) transpileVarStatement(stmt *parser.VarStatement) string {
-	var result strings.Builder
-	result.WriteString(t.indent() + "var " + stmt.Name.Value)
-
-	if stmt.Type != "" {
-		result.WriteString(" " + stmt.Type)
-	}
-
-	if stmt.Value != nil {
-		result.WriteString(" = " + t.transpileExpression(stmt.Value))
-	}
-
-	return result.String()
-}
-
-func (t *Transpiler) transpileConstStatement(stmt *parser.ConstStatement) string {
-	var result strings.Builder
-	result.WriteString(t.indent() + "const " + stmt.Name.Value)
-
-	if stmt.Type != "" {
-		result.WriteString(" " + stmt.Type)
-	}
-
-	result.WriteString(" = " + t.transpileExpression(stmt.Value))
-	return result.String()
-}
-
-func (t *Transpiler) transpileFunctionStatement(stmt *parser.FunctionStatement) string {
-	t.currentFunction = stmt.Name.Value
-
-	var result strings.Builder
-	result.WriteString(t.indent() + "func " + stmt.Name.Value + "(")
-
-	// Параметры
-	for i, param := range stmt.Parameters {
-		if i > 0 {
-			result.WriteString(", ")
-		}
-		result.WriteString(param.Value)
-		if i < len(stmt.ParamTypes) && stmt.ParamTypes[i] != "" {
-			result.WriteString(" " + stmt.ParamTypes[i])
-		}
-	}
-	result.WriteString(")")
-
-	// Возвращаемый тип
-	if stmt.ReturnType != "" {
-		// Если функция содержит try-catch, добавляем error к возвращаемому типу
-		if t.blockNeedsErrorHandling(stmt.Body) {
-			if stmt.ReturnType == "error" {
-				result.WriteString(" error")
-			} else {
-				result.WriteString(" (" + stmt.ReturnType + ", error)")
-			}
-		} else {
-			result.WriteString(" " + stmt.ReturnType)
-		}
-	} else if t.blockNeedsErrorHandling(stmt.Body) {
-		result.WriteString(" error")
-	}
-
-	result.WriteString(" ")
-	result.WriteString(t.transpileBlockStatement(stmt.Body))
-
-	return result.String()
-}
-
-func (t *Transpiler) transpileBlockStatement(stmt *parser.BlockStatement) string {
-	var result strings.Builder
-	result.WriteString("{\n")
-
-	t.indentLevel++
-	for _, s := range stmt.Statements {
-		transpiled := t.transpileStatement(s)
-		if transpiled != "" {
-			result.WriteString(transpiled)
-			if !strings.HasSuffix(transpiled, "\n") {
-				result.WriteString("\n")
+func (cp *CommentProcessor) findCommentForLine(line int) *ast.Comment {
+	for _, group := range cp.comments {
+		for _, comment := range group.List {
+			pos := cp.fset.Position(comment.Pos())
+			if pos.Line == line {
+				return comment
 			}
 		}
 	}
-	t.indentLevel--
-
-	result.WriteString(t.indent() + "}")
-	return result.String()
+	return nil
 }
 
-func (t *Transpiler) transpileReturnStatement(stmt *parser.ReturnStatement) string {
-	if stmt.ReturnValue != nil {
-		return t.indent() + "return " + t.transpileExpression(stmt.ReturnValue)
-	}
-	return t.indent() + "return"
-}
-
-func (t *Transpiler) transpileIfStatement(stmt *parser.IfStatement) string {
-	var result strings.Builder
-	result.WriteString(t.indent() + "if " + t.transpileExpression(stmt.Condition) + " ")
-	result.WriteString(t.transpileBlockStatement(stmt.Consequence))
-
-	if stmt.Alternative != nil {
-		result.WriteString(" else ")
-		result.WriteString(t.transpileBlockStatement(stmt.Alternative))
+// Улучшенная версия парсера с обработкой комментариев
+func (t *Transpiler) parseWithComments(source string) (*ast.File, error) {
+	file, err := parser.ParseFile(t.fset, "", source, parser.ParseComments)
+	if err != nil {
+		return nil, err
 	}
 
-	return result.String()
-}
+	// // Сохраняем комментарии для дальнейшей обработки
+	// t.fset.Comments = file.Comments
 
-func (t *Transpiler) transpileForStatement(stmt *parser.ForStatement) string {
-	var result strings.Builder
-	result.WriteString(t.indent() + "for ")
-
-	if stmt.Init != nil {
-		result.WriteString(strings.TrimSpace(t.transpileStatement(stmt.Init)))
-	}
-	result.WriteString("; ")
-
-	if stmt.Condition != nil {
-		result.WriteString(t.transpileExpression(stmt.Condition))
-	}
-	result.WriteString("; ")
-
-	if stmt.Update != nil {
-		result.WriteString(strings.TrimSpace(t.transpileStatement(stmt.Update)))
-	}
-
-	result.WriteString(" ")
-	result.WriteString(t.transpileBlockStatement(stmt.Body))
-
-	return result.String()
-}
-
-func (t *Transpiler) transpileTryStatement(stmt *parser.TryStatement) string {
-	var result strings.Builder
-
-	// // Генерируем функцию-обертку для try-catch
-	// funcName := fmt.Sprintf("tryBlock%d", t.errorVarCounter)
-	t.errorVarCounter++
-
-	// Создаем анонимную функцию для try блока
-	result.WriteString(t.indent() + "err := func() error {\n")
-	t.indentLevel++
-
-	// Транспилируем содержимое try блока
-	for _, s := range stmt.Body.Statements {
-		transpiled := t.transpileStatement(s)
-		if transpiled != "" {
-			result.WriteString(transpiled)
-			if !strings.HasSuffix(transpiled, "\n") {
-				result.WriteString("\n")
-			}
-		}
-	}
-
-	result.WriteString(t.indent() + "return nil\n")
-	t.indentLevel--
-	result.WriteString(t.indent() + "}()\n")
-
-	// Генерируем catch блоки
-	if len(stmt.CatchBlocks) > 0 {
-		result.WriteString(t.indent() + "if err != nil {\n")
-		t.indentLevel++
-
-		for i, catchBlock := range stmt.CatchBlocks {
-			if i > 0 {
-				result.WriteString(t.indent() + "} else ")
-			}
-
-			// Если есть тип исключения, проверяем его
-			if catchBlock.Type != "" {
-				result.WriteString(fmt.Sprintf("if _, ok := err.(*%s); ok ", catchBlock.Type))
-			}
-
-			result.WriteString("{\n")
-			t.indentLevel++
-
-			// Если есть переменная для исключения, присваиваем ей значение
-			if catchBlock.Exception != nil {
-				result.WriteString(t.indent() + fmt.Sprintf("%s := err\n", catchBlock.Exception.Value))
-			}
-
-			// Транспилируем тело catch блока
-			for _, s := range catchBlock.Body.Statements {
-				transpiled := t.transpileStatement(s)
-				if transpiled != "" {
-					result.WriteString(transpiled)
-					if !strings.HasSuffix(transpiled, "\n") {
-						result.WriteString("\n")
-					}
-				}
-			}
-
-			t.indentLevel--
-		}
-
-		result.WriteString(t.indent() + "}\n")
-		t.indentLevel--
-		result.WriteString(t.indent() + "}\n")
-	}
-
-	// Finally блок
-	if stmt.Finally != nil {
-		result.WriteString(t.indent() + "// Finally block\n")
-		for _, s := range stmt.Finally.Statements {
-			transpiled := t.transpileStatement(s)
-			if transpiled != "" {
-				result.WriteString(transpiled)
-				if !strings.HasSuffix(transpiled, "\n") {
-					result.WriteString("\n")
-				}
-			}
-		}
-	}
-
-	return result.String()
-}
-
-func (t *Transpiler) transpileThrowStatement(stmt *parser.ThrowStatement) string {
-	expr := t.transpileExpression(stmt.Value)
-
-	// Если выражение не является error, оборачиваем его
-	return t.indent() + fmt.Sprintf("return errors.New(fmt.Sprintf(\"%%v\", %s))", expr)
-}
-
-func (t *Transpiler) transpileExpressionStatement(stmt *parser.ExpressionStatement) string {
-	return t.indent() + t.transpileExpression(stmt.Expression)
-}
-
-func (t *Transpiler) transpileAssignStatement(stmt *parser.AssignStatement) string {
-	return t.indent() + fmt.Sprintf("%s = %s", stmt.Name.Value, t.transpileExpression(stmt.Value))
-}
-
-func (t *Transpiler) transpileDefineStatement(stmt *parser.DefineStatement) string {
-	return t.indent() + fmt.Sprintf("%s := %s", stmt.Name.Value, t.transpileExpression(stmt.Value))
-}
-
-// transpileExpression транспилирует выражения
-func (t *Transpiler) transpileExpression(expr parser.Expression) string {
-	switch e := expr.(type) {
-	case *parser.Identifier:
-		return e.Value
-	case *parser.IntegerLiteral:
-		return fmt.Sprintf("%d", e.Value)
-	case *parser.FloatLiteral:
-		return fmt.Sprintf("%f", e.Value)
-	case *parser.StringLiteral:
-		return fmt.Sprintf("\"%s\"", e.Value)
-	case *parser.BooleanLiteral:
-		return fmt.Sprintf("%t", e.Value)
-	case *parser.PrefixExpression:
-		return fmt.Sprintf("%s%s", e.Operator, t.transpileExpression(e.Right))
-	case *parser.InfixExpression:
-		return fmt.Sprintf("%s %s %s",
-			t.transpileExpression(e.Left),
-			e.Operator,
-			t.transpileExpression(e.Right))
-	case *parser.DotExpression:
-		return fmt.Sprintf("%s.%s", t.transpileExpression(e.Left), e.Property.Value)
-	case *parser.CallExpression:
-		var args []string
-		for _, arg := range e.Arguments {
-			args = append(args, t.transpileExpression(arg))
-		}
-		return fmt.Sprintf("%s(%s)",
-			t.transpileExpression(e.Function),
-			strings.Join(args, ", "))
-	default:
-		return fmt.Sprintf("/* Unknown expression type: %T */", e)
-	}
-}
-
-func (t *Transpiler) indent() string {
-	return strings.Repeat("\t", t.indentLevel)
-}
-
-func TranspileFile(input string) (string, error) {
-	lexer := lexer.New(input)
-	parser := parser.New(lexer)
-	program := parser.ParseProgram()
-
-	if len(parser.Errors()) > 0 {
-		var errorMsg strings.Builder
-		errorMsg.WriteString("Parser errors:\n")
-		for _, err := range parser.Errors() {
-			errorMsg.WriteString(fmt.Sprintf("  %s\n", err))
-		}
-		return "", fmt.Errorf("%s", errorMsg.String())
-	}
-
-	transpiler := New()
-	result := transpiler.TranspileProgram(program)
-
-	return result, nil
-}
-
-// CustomErrorType представляет пользовательский тип ошибки
-type CustomErrorType struct {
-	Name    string
-	Message string
-}
-
-func (e *CustomErrorType) Error() string {
-	return fmt.Sprintf("%s: %s", e.Name, e.Message)
+	return file, nil
 }

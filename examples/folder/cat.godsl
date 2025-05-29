@@ -2,5 +2,5 @@ package cat
 import "fmt"
 
 func Catcat(){
-    fmt.Println("go go cat!")
+    fmt.Println("go go Kostyannn!")
 }
