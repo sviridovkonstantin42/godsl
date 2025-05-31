@@ -5,15 +5,20 @@ import "errors"
 
 func main(){
     try{
-        a, err:=functionWithError()
+        //@errcheck
+        a, err:=functionWithError() 
+        log.Println("computed a...")
+
+        //@errcheck
         b, err:=functionWithError()
+        log.Println("computed b...")
+
+        //@errcheck
         c, err:=functionWithError()
-        d, err:=functionWithError()
-        e, err:=functionWithError()
-        f, err:=functionWithError()
-        g, err:=functionWithError()
-        log.Println(a,b,c,d,e,f,g)
-    }catch {
+        log.Println("computed c...")
+
+        log.Println(a,b,c)
+    } catch {
         log.Println(err)
     }
 }

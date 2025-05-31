@@ -16,12 +16,16 @@ import (
 )
 
 type Transpiler struct {
-	fset *token.FileSet
+	fset             *token.FileSet
+	comments         []*ast.CommentGroup
+	errcheckComments map[token.Pos]bool // Позиции комментариев @errcheck для удаления
 }
 
+// NewTranspiler создает новый экземпляр транспилятора
 func NewTranspiler() *Transpiler {
 	return &Transpiler{
-		fset: token.NewFileSet(),
+		fset:             token.NewFileSet(),
+		errcheckComments: make(map[token.Pos]bool),
 	}
 }
 
@@ -31,7 +35,11 @@ func (t *Transpiler) Transpile(source string) (string, error) {
 		return "", fmt.Errorf("parse error: %v", err)
 	}
 
+	t.comments = file.Comments
+
 	newFile := t.transpileFile(file)
+
+	newFile.Comments = t.filterComments(newFile.Comments)
 
 	var buf bytes.Buffer
 	err = format.Node(&buf, t.fset, newFile)
@@ -41,6 +49,39 @@ func (t *Transpiler) Transpile(source string) (string, error) {
 
 	result := t.cleanupFormatting(buf.String())
 	return result, nil
+}
+
+// filterComments удаляет комментарии @errcheck из результирующего кода
+func (t *Transpiler) filterComments(commentGroups []*ast.CommentGroup) []*ast.CommentGroup {
+	var filteredGroups []*ast.CommentGroup
+
+	for _, group := range commentGroups {
+		var filteredComments []*ast.Comment
+
+		for _, comment := range group.List {
+			// Проверяем, является ли это @errcheck комментарием
+			if !t.isErrCheckComment(comment) {
+				filteredComments = append(filteredComments, comment)
+			}
+		}
+
+		// Добавляем группу только если в ней остались комментарии
+		if len(filteredComments) > 0 {
+			filteredGroups = append(filteredGroups, &ast.CommentGroup{
+				List: filteredComments,
+			})
+		}
+	}
+
+	return filteredGroups
+}
+
+// isErrCheckComment проверяет, является ли комментарий @errcheck комментарием
+func (t *Transpiler) isErrCheckComment(comment *ast.Comment) bool {
+	return strings.Contains(comment.Text, "//@errcheck") ||
+		strings.Contains(comment.Text, "// @errcheck") ||
+		strings.TrimSpace(comment.Text) == "//@errcheck" ||
+		strings.TrimSpace(comment.Text) == "// @errcheck"
 }
 
 // cleanupFormatting убирает лишние пустые строки и исправляет форматирование
@@ -75,7 +116,7 @@ func (t *Transpiler) transpileFile(file *ast.File) *ast.File {
 		Package:  file.Package,
 		Name:     file.Name,
 		Imports:  file.Imports,
-		Comments: file.Comments,
+		Comments: file.Comments, // Сначала копируем все комментарии
 	}
 
 	for _, decl := range file.Decls {
@@ -169,9 +210,8 @@ func (t *Transpiler) transpileTryStmt(tryStmt *ast.TryStmt) []ast.Stmt {
 	for _, stmt := range tryStmt.Body.List {
 		result = append(result, stmt)
 
-		// После каждого statement, который может вернуть ошибку,
-		// добавляем проверку err != nil
-		if t.isErrorProducingStmt(stmt) {
+		// Добавляем проверку err != nil только если есть комментарий //@errcheck
+		if t.hasErrCheckComment(stmt) {
 			errorCheck := t.createErrorCheck(tryStmt.Catches)
 			result = append(result, errorCheck)
 		}
@@ -180,7 +220,53 @@ func (t *Transpiler) transpileTryStmt(tryStmt *ast.TryStmt) []ast.Stmt {
 	return result
 }
 
-// isErrorProducingStmt проверяет, может ли statement вернуть ошибку
+// hasErrCheckComment проверяет, есть ли у statement комментарий //@errcheck
+func (t *Transpiler) hasErrCheckComment(stmt ast.Stmt) bool {
+	stmtPos := stmt.Pos()
+	stmtEnd := stmt.End()
+
+	// Ищем комментарии в той же строке или на строке выше
+	for _, commentGroup := range t.comments {
+		for _, comment := range commentGroup.List {
+			// Проверяем, что комментарий находится рядом со statement
+			if t.isCommentRelatedToStmt(comment, stmtPos, stmtEnd) {
+				if t.isErrCheckComment(comment) {
+					// Помечаем этот комментарий для удаления
+					t.errcheckComments[comment.Pos()] = true
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// isCommentRelatedToStmt проверяет, относится ли комментарий к данному statement
+func (t *Transpiler) isCommentRelatedToStmt(comment *ast.Comment, stmtPos, stmtEnd token.Pos) bool {
+	commentPos := comment.Pos()
+
+	// Получаем позиции в исходном коде
+	stmtPosition := t.fset.Position(stmtPos)
+	commentPosition := t.fset.Position(commentPos)
+
+	// Комментарий должен быть в той же строке или на строке выше
+	lineDiff := stmtPosition.Line - commentPosition.Line
+
+	// Комментарий в той же строке (справа от кода)
+	if lineDiff == 0 && commentPos > stmtPos {
+		return true
+	}
+
+	// Комментарий на строке выше
+	if lineDiff == 1 {
+		return true
+	}
+
+	return false
+}
+
+// Оставляем старые функции для совместимости, но они больше не используются
+// isErrorProducingStmt проверяет, может ли statement вернуть ошибку (не используется)
 func (t *Transpiler) isErrorProducingStmt(stmt ast.Stmt) bool {
 	switch s := stmt.(type) {
 	case *ast.AssignStmt:
@@ -196,7 +282,6 @@ func (t *Transpiler) isErrorProducingStmt(stmt ast.Stmt) bool {
 				return true
 			}
 		}
-
 	}
 	return false
 }
@@ -331,6 +416,7 @@ func (t *Transpiler) createTypeCheck(catchStmt *ast.CatchStmt, isLast bool) ast.
 		},
 	}
 
+	// Если это не последний catch и нет else, добавляем return err
 	if !isLast {
 		ifStmt.Else = &ast.BlockStmt{
 			Lbrace: token.NoPos,
@@ -349,6 +435,7 @@ func (t *Transpiler) createTypeCheck(catchStmt *ast.CatchStmt, isLast bool) ast.
 	return ifStmt
 }
 
+// TranspileFile главная функция для транспиляции
 func TranspileFile(source string) (string, error) {
 	transpiler := NewTranspiler()
 	return transpiler.Transpile(source)
