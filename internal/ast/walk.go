@@ -46,6 +46,27 @@ func Walk(v Visitor, node Node) {
 	case *CommentGroup:
 		walkList(v, n.List)
 
+	case *TryStmt:
+		if v := v.Visit(n); v != nil {
+			Walk(v, n.Body)
+			if n != nil {
+				for _, c := range n.Catches {
+					Walk(v, c)
+				}
+			}
+		}
+
+	case *CatchStmt:
+		if v := v.Visit(n); v != nil {
+			if n.ErrorVar != nil {
+				Walk(v, n.ErrorVar)
+			}
+			if n.ErrorType != nil {
+				Walk(v, n.ErrorType)
+			}
+			Walk(v, n.Body)
+		}
+
 	case *Field:
 		if n.Doc != nil {
 			Walk(v, n.Doc)
@@ -347,7 +368,6 @@ func Walk(v Visitor, node Node) {
 		for _, f := range n.Files {
 			Walk(v, f)
 		}
-
 	default:
 		panic(fmt.Sprintf("ast.Walk: unexpected node type %T", n))
 	}

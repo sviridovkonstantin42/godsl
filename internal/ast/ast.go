@@ -771,6 +771,22 @@ type (
 		X          Expr        // value to range over
 		Body       *BlockStmt
 	}
+
+	TryStmt struct {
+		Try     token.Pos    // position of "try" keyword
+		Body    *BlockStmt   // try block
+		Catches []*CatchStmt // catch clauses; may be empty
+	}
+
+	// A CatchStmt node represents a catch clause in a try statement.
+	CatchStmt struct {
+		Catch     token.Pos  // position of "catch" keyword
+		Lparen    token.Pos  // position of "(" (if present)
+		ErrorVar  *Ident     // error variable name; or nil for catch-all
+		ErrorType Expr       // error type; or nil for any error
+		Rparen    token.Pos  // position of ")" (if present)
+		Body      *BlockStmt // catch block
+	}
 )
 
 // Pos and End implementations for statement nodes.
@@ -859,6 +875,17 @@ func (s *SelectStmt) End() token.Pos { return s.Body.End() }
 func (s *ForStmt) End() token.Pos    { return s.Body.End() }
 func (s *RangeStmt) End() token.Pos  { return s.Body.End() }
 
+func (s *TryStmt) Pos() token.Pos { return s.Try }
+func (s *TryStmt) End() token.Pos {
+	if len(s.Catches) > 0 {
+		return s.Catches[len(s.Catches)-1].End()
+	}
+	return s.Body.End()
+}
+
+func (s *CatchStmt) Pos() token.Pos { return s.Catch }
+func (s *CatchStmt) End() token.Pos { return s.Body.End() }
+
 // stmtNode() ensures that only statement nodes can be
 // assigned to a Stmt.
 func (*BadStmt) stmtNode()        {}
@@ -882,6 +909,8 @@ func (*CommClause) stmtNode()     {}
 func (*SelectStmt) stmtNode()     {}
 func (*ForStmt) stmtNode()        {}
 func (*RangeStmt) stmtNode()      {}
+func (*TryStmt) stmtNode()        {}
+func (*CatchStmt) stmtNode()      {}
 
 // ----------------------------------------------------------------------------
 // Declarations

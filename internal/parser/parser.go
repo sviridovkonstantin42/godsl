@@ -426,6 +426,8 @@ var stmtStart = map[token.Token]bool{
 	token.SWITCH:      true,
 	token.TYPE:        true,
 	token.VAR:         true,
+	token.TRY:         true,
+	token.CATCH:       true,
 }
 
 var declStart = map[token.Token]bool{
@@ -2433,6 +2435,8 @@ func (p *parser) parseStmt() (s ast.Stmt) {
 	switch p.tok {
 	case token.CONST, token.TYPE, token.VAR:
 		s = &ast.DeclStmt{Decl: p.parseDecl(stmtStart)}
+	case token.TRY:
+		s = p.parseTryStmt()
 	case
 		// tokens that may start an expression
 		token.IDENT, token.INT, token.FLOAT, token.IMAG, token.CHAR, token.STRING, token.FUNC, token.LPAREN, // operands
@@ -2942,5 +2946,59 @@ func packIndexExpr(x ast.Expr, lbrack token.Pos, exprs []ast.Expr, rbrack token.
 			Indices: exprs,
 			Rbrack:  rbrack,
 		}
+	}
+}
+
+func (p *parser) parseTryStmt() *ast.TryStmt {
+	defer decNestLev(incNestLev(p))
+	if p.trace {
+		defer un(trace(p, "TryStmt"))
+	}
+
+	pos := p.expect(token.TRY)
+	body := p.parseBlockStmt()
+
+	var catches []*ast.CatchStmt
+	for p.tok == token.CATCH {
+		catchPos := p.expect(token.CATCH)
+
+		var lparen, rparen token.Pos
+		var errorVar *ast.Ident
+		var errorType ast.Expr
+
+		if p.tok == token.LPAREN {
+			lparen = p.expect(token.LPAREN)
+
+			if p.tok != token.RPAREN {
+				if p.tok == token.IDENT {
+					errorVar = p.parseIdent()
+				}
+				// тип может идти после имени или быть единственным
+				if p.tok != token.RPAREN {
+					if errorVar != nil {
+						p.expect(token.IDENT) // пробел между именем и типом
+					}
+					errorType = p.parseType()
+				}
+			}
+			rparen = p.expect(token.RPAREN)
+		}
+
+		catchBody := p.parseBlockStmt()
+
+		catches = append(catches, &ast.CatchStmt{
+			Catch:     catchPos,
+			Lparen:    lparen,
+			ErrorVar:  errorVar,
+			ErrorType: errorType,
+			Rparen:    rparen,
+			Body:      catchBody,
+		})
+	}
+
+	return &ast.TryStmt{
+		Try:     pos,
+		Body:    body,
+		Catches: catches,
 	}
 }

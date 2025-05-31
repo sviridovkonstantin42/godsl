@@ -1,7 +1,23 @@
 package main
 
-import "fmt"
+import "log"
+import "errors"
 
-funcee2 emain() {
-dwq2d2doe
+func main(){
+    try{
+        a, err:=functionWithError()
+        b, err:=functionWithError()
+        c, err:=functionWithError()
+        d, err:=functionWithError()
+        e, err:=functionWithError()
+        f, err:=functionWithError()
+        g, err:=functionWithError()
+        log.Println(a,b,c,d,e,f,g)
+    }catch {
+        log.Println(err)
+    }
+}
+
+func functionWithError() (string, error){
+    return "", errors.New("У вас ошибка!")
 }

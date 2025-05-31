@@ -112,6 +112,9 @@ const (
 	IF
 	IMPORT
 
+	TRY
+	CATCH
+
 	INTERFACE
 	MAP
 	PACKAGE
@@ -136,6 +139,9 @@ var tokens = [...]string{
 
 	EOF:     "EOF",
 	COMMENT: "COMMENT",
+
+	TRY:   "try",
+	CATCH: "catch",
 
 	IDENT:  "IDENT",
 	INT:    "INT",

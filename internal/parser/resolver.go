@@ -256,6 +256,25 @@ func (r *resolver) Visit(node ast.Node) ast.Visitor {
 
 	switch n := node.(type) {
 
+	case *ast.TryStmt:
+		r.openScope(n.Pos())
+		defer r.closeScope()
+		r.walkStmts(n.Body.List)
+		for _, c := range n.Catches {
+			ast.Walk(r, c)
+		}
+
+	case *ast.CatchStmt:
+		r.openScope(n.Pos())
+		defer r.closeScope()
+		if n.ErrorVar != nil {
+			r.declare(n, nil, r.topScope, ast.Var, n.ErrorVar)
+		}
+		if n.ErrorType != nil {
+			ast.Walk(r, n.ErrorType)
+		}
+		r.walkStmts(n.Body.List)
+
 	// Expressions.
 	case *ast.Ident:
 		r.resolve(n, true)
