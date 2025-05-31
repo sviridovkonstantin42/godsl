@@ -32,10 +32,32 @@ https://github.com/sviridovkonstantin42/godsl/releases
 
 ```go
 package main
-import "fmt"
+
+import "log"
+import "errors"
 
 func main(){
-    fmt.Println("Hello world!")
+    try{
+        //@errcheck
+        a, err:=functionWithError()
+        log.Println("computed a...")
+
+        //@errcheck
+        b, err:=functionWithError()
+        log.Println("computed b...")
+
+        //@errcheck
+        c, err:=functionWithError()
+        log.Println("computed c...")
+
+        log.Println(a,b,c)
+    } catch {
+        log.Println(err)
+    }
+}
+
+func functionWithError() (string, error){
+    return "", errors.New("У вас ошибка!")
 }
 ```
 
@@ -45,4 +67,35 @@ func main(){
 godsl generate <путь проекта>
 ```
 
-3. Транспилированный проект лежит в текущей папке с названием `build`
+3. Транспилированный проект лежит в текущей папке с названием `build`. Результат:
+
+```go
+package main
+
+import "log"
+import "errors"
+
+func main() {
+	a, err := functionWithError()
+	if err != nil {
+		log.Println(err)
+	}
+	log.Println("computed a...")
+
+	b, err := functionWithError()
+	if err != nil {
+		log.Println(err)
+	}
+	log.Println("computed b...")
+
+	c, err := functionWithError()
+	if err != nil {
+		log.Println(err)
+	}
+	log.Println("computed c...")
+
+	log.Println(a, b, c)
+}
+
+func functionWithError() (string, error) { return "", errors.New("У вас ошибка!") }
+```
