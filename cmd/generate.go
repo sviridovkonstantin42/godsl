@@ -121,7 +121,7 @@ func generateProject(projectPath string, buildDirOverride string, opts GenerateO
 		cache = newBuildCache()
 	}
 
-	tasks, copyTasks, deletions, nextCache, err := planProjectTasks(walkRoot, relBase, buildDir, cache)
+	tasks, copyTasks, deletions, cachedGodsl, cachedFiles, nextCache, err := planProjectTasks(walkRoot, relBase, buildDir, cache)
 	if err != nil {
 		return "", fmt.Errorf("ошибка сбора файлов: %w", err)
 	}
@@ -132,14 +132,29 @@ func generateProject(projectPath string, buildDirOverride string, opts GenerateO
 			return "", fmt.Errorf("в проекте нет файлов для обработки")
 		}
 		// Иначе просто ничего не изменилось — это ок.
-		fmt.Println("Нет изменений.")
+		if len(cachedGodsl) > 0 {
+			fmt.Printf("Нет изменений. Закэшировано .godsl файлов: %d\n", len(cachedGodsl))
+			for _, p := range cachedGodsl {
+				fmt.Printf("↺ cached %s\n", p)
+			}
+		} else {
+			fmt.Println("Нет изменений.")
+		}
 		if err := saveBuildCache(buildDir, nextCache); err != nil {
 			return "", fmt.Errorf("ошибка записи кэша: %w", err)
 		}
 		return buildDir, nil
 	}
 
+	if len(cachedGodsl) > 0 {
+		fmt.Printf("Закэшировано (пропущено) .godsl файлов: %d\n", len(cachedGodsl))
+		for _, p := range cachedGodsl {
+			fmt.Printf("↺ cached %s\n", p)
+		}
+	}
+
 	if len(deletions) > 0 {
+		fmt.Printf("Удалено из build: %d файлов\n", len(deletions))
 		for _, p := range deletions {
 			_ = os.Remove(p)
 			_ = cleanupEmptyDirs(buildDir, filepath.Dir(p))
@@ -147,6 +162,7 @@ func generateProject(projectPath string, buildDirOverride string, opts GenerateO
 	}
 
 	if len(copyTasks) > 0 {
+		fmt.Printf("Копирование: %d файлов\n", len(copyTasks))
 		if err := copyFilesParallel(copyTasks); err != nil {
 			return "", fmt.Errorf("ошибка копирования файлов: %w", err)
 		}
@@ -163,14 +179,17 @@ func generateProject(projectPath string, buildDirOverride string, opts GenerateO
 		return "", fmt.Errorf("ошибка записи кэша: %w", err)
 	}
 
+	_ = cachedFiles // оставляем на будущее (например, детальный вывод по обычным файлам)
 	fmt.Println("Готово (инкрементально).")
 	return buildDir, nil
 }
 
-func planProjectTasks(walkRoot, relBase, buildDir string, cache buildCache) ([]FileTask, []FileTask, []string, buildCache, error) {
+func planProjectTasks(walkRoot, relBase, buildDir string, cache buildCache) ([]FileTask, []FileTask, []string, []string, []string, buildCache, error) {
 	var tasks []FileTask
 	var copyTasks []FileTask
 	var deletions []string
+	var cachedGodsl []string
+	var cachedFiles []string
 
 	seenGodsl := make(map[string]bool)
 	seenFiles := make(map[string]bool)
@@ -212,6 +231,7 @@ func planProjectTasks(walkRoot, relBase, buildDir string, cache buildCache) ([]F
 
 			// Быстрый skip по (size, mtime). Если они совпали — файл не трогаем.
 			if ok && prev.Size == size && prev.ModTime == modTime {
+				cachedGodsl = append(cachedGodsl, relPath)
 				return nil
 			}
 
@@ -223,6 +243,7 @@ func planProjectTasks(walkRoot, relBase, buildDir string, cache buildCache) ([]F
 			if ok && prev.Hash == h {
 				// Контент тот же — обновим метаданные, но не транспилируем.
 				nextCache.Godsl[relPath] = cacheEntry{TargetRel: targetRel, Size: size, ModTime: modTime, Hash: h}
+				cachedGodsl = append(cachedGodsl, relPath)
 				return nil
 			}
 
@@ -242,6 +263,7 @@ func planProjectTasks(walkRoot, relBase, buildDir string, cache buildCache) ([]F
 
 		// Для обычных файлов достаточно (size,mtime) — если они совпали, пропускаем копирование.
 		if ok && prev.Size == size && prev.ModTime == modTime {
+			cachedFiles = append(cachedFiles, relPath)
 			return nil
 		}
 
@@ -251,7 +273,7 @@ func planProjectTasks(walkRoot, relBase, buildDir string, cache buildCache) ([]F
 	})
 
 	if err != nil {
-		return nil, nil, nil, buildCache{}, err
+		return nil, nil, nil, nil, nil, buildCache{}, err
 	}
 
 	// Удаляем результаты для удалённых исходников.
@@ -268,7 +290,7 @@ func planProjectTasks(walkRoot, relBase, buildDir string, cache buildCache) ([]F
 		}
 	}
 
-	return tasks, copyTasks, deletions, nextCache, nil
+	return tasks, copyTasks, deletions, cachedGodsl, cachedFiles, nextCache, nil
 }
 
 func transpileFilesParallel(tasks []FileTask) error {
