@@ -1,7 +1,6 @@
 package main
 
 import "log"
-import "errors"
 import "github.com/sviridovkonstantin42/godsl/examples/utils"
 
 func main(){
