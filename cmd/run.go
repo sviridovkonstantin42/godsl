@@ -11,25 +11,26 @@ import (
 var runCmd = &cobra.Command{
 	Use:   "run [path]",
 	Short: "Транспилирует проект и выполняет go run в папке build",
-	Run: func(_ *cobra.Command, args []string) {
+	Run: func(cmd *cobra.Command, args []string) {
 		var projectPath string
 		if len(args) > 0 {
 			projectPath = args[0]
 		}
 
-		buildDir, err := generateProject(projectPath, "")
+		clean, _ := cmd.Flags().GetBool("clean")
+		buildDir, err := generateProject(projectPath, "", GenerateOptions{Clean: clean})
 		if err != nil {
 			fmt.Printf("Ошибка генерации: %v\n", err)
 			return
 		}
 
-		cmd := exec.Command("go", "run", ".")
-		cmd.Dir = buildDir
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Stdin = os.Stdin
+		execCmd := exec.Command("go", "run", ".")
+		execCmd.Dir = buildDir
+		execCmd.Stdout = os.Stdout
+		execCmd.Stderr = os.Stderr
+		execCmd.Stdin = os.Stdin
 
-		if err := cmd.Run(); err != nil {
+		if err := execCmd.Run(); err != nil {
 			fmt.Printf("Ошибка go run: %v\n", err)
 			return
 		}
@@ -38,6 +39,5 @@ var runCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(runCmd)
+	runCmd.Flags().Bool("clean", false, "Полная пересборка build (без инкремента)")
 }
-
-
