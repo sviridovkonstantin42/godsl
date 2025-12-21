@@ -2,27 +2,23 @@ package main
 
 import "log"
 import "errors"
+import "github.com/sviridovkonstantin42/godsl/examples/utils"
 
 func main(){
     try{
         //@errcheck
-        a, err:=functionWithError() 
+        a, err:=utils.FunctionWithError()
         log.Println("computed a...")
 
         //@errcheck
-        b, err:=functionWithError()
+        b, err:=utils.FunctionWithError()
         log.Println("computed b...")
 
         //@errcheck
-        c, err:=functionWithError()
+        c, err:=utils.FunctionWithError()
         log.Println("computed c...")
-
         log.Println(a,b,c)
     } catch {
         log.Println(err)
     }
-}
-
-func functionWithError() (string, error){
-    return "", errors.New("У вас ошибка!")
 }

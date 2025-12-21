@@ -1,0 +1,7 @@
+package utils
+
+import "errors"
+
+func FunctionWithError() (string, error){
+    return "", errors.New("У вас ошибка!")
+}
