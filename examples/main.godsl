@@ -29,11 +29,11 @@ func processData() error {
 
 func main() {
 	try {
-		//@errcheck
+		@errcheck
 		a, err := utils.FunctionWithError()
 		log.Println("computed a =", a)
 
-		//@errcheck
+		@errcheck
 		b, err := utils.FunctionWithError()
 		log.Println("computed b =", b)
 	} catch {

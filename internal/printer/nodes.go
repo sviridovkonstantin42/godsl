@@ -1574,6 +1574,10 @@ func (p *printer) stmt(stmt ast.Stmt, nextIsRBrace bool) {
 		p.stmt(s.Stmt, nextIsRBrace)
 		p.print("?")
 
+	case *ast.ErrCheckStmt:
+		p.print("@errcheck", newline)
+		p.stmt(s.Stmt, nextIsRBrace)
+
 	default:
 		panic("unreachable")
 	}

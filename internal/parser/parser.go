@@ -426,10 +426,11 @@ var stmtStart = map[token.Token]bool{
 	token.SWITCH:      true,
 	token.TYPE:        true,
 	token.VAR:         true,
-	token.TRY:         true,
-	token.CATCH:       true,
-	token.FINALLY:     true,
-	token.THROW:       true,
+	token.TRY:      true,
+	token.CATCH:    true,
+	token.FINALLY:  true,
+	token.THROW:    true,
+	token.ERRCHECK: true,
 }
 
 var declStart = map[token.Token]bool{
@@ -2442,6 +2443,9 @@ func (p *parser) parseStmt() (s ast.Stmt) {
 	case token.THROW:
 		s = p.parseThrowStmt()
 		p.expectSemi()
+	case token.ERRCHECK:
+		s = p.parseErrCheckStmt()
+		// Не вызываем expectSemi — аннотация не завершает statement
 	case
 		// tokens that may start an expression
 		token.IDENT, token.INT, token.FLOAT, token.IMAG, token.CHAR, token.STRING, token.FUNC, token.LPAREN, // operands
@@ -3018,6 +3022,21 @@ func (p *parser) parseTryStmt() *ast.TryStmt {
 		Body:    body,
 		Catches: catches,
 		Finally: finally,
+	}
+}
+
+func (p *parser) parseErrCheckStmt() *ast.ErrCheckStmt {
+	if p.trace {
+		defer un(trace(p, "ErrCheckStmt"))
+	}
+
+	pos := p.expect(token.ERRCHECK)
+	// Парсим следующий statement (тот, что нужно проверить на ошибку)
+	stmt := p.parseStmt()
+
+	return &ast.ErrCheckStmt{
+		At:   pos,
+		Stmt: stmt,
 	}
 }
 

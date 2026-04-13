@@ -802,6 +802,14 @@ type (
 		Stmt     Stmt      // the underlying assign or expression statement
 		Question token.Pos // position of "?"
 	}
+
+	// An ErrCheckStmt marks the following statement for error checking.
+	// Written as @errcheck on the line before the statement.
+	// Transpiles to the statement + "if err != nil { <catch body> }".
+	ErrCheckStmt struct {
+		At   token.Pos // position of @errcheck
+		Stmt Stmt      // the statement to error-check
+	}
 )
 
 // Pos and End implementations for statement nodes.
@@ -910,6 +918,9 @@ func (s *ThrowStmt) End() token.Pos { return s.X.End() }
 func (s *QuestionStmt) Pos() token.Pos { return s.Stmt.Pos() }
 func (s *QuestionStmt) End() token.Pos { return s.Question + 1 }
 
+func (s *ErrCheckStmt) Pos() token.Pos { return s.At }
+func (s *ErrCheckStmt) End() token.Pos { return s.Stmt.End() }
+
 // stmtNode() ensures that only statement nodes can be
 // assigned to a Stmt.
 func (*BadStmt) stmtNode()        {}
@@ -935,8 +946,9 @@ func (*ForStmt) stmtNode()        {}
 func (*RangeStmt) stmtNode()      {}
 func (*TryStmt) stmtNode()       {}
 func (*CatchStmt) stmtNode()     {}
-func (*ThrowStmt) stmtNode()     {}
-func (*QuestionStmt) stmtNode()  {}
+func (*ThrowStmt) stmtNode()    {}
+func (*QuestionStmt) stmtNode() {}
+func (*ErrCheckStmt) stmtNode() {}
 
 // ----------------------------------------------------------------------------
 // Declarations

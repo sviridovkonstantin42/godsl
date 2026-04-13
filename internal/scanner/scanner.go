@@ -944,6 +944,20 @@ scanAgain:
 		case '?':
 			insertSemi = true
 			tok = token.QUESTION
+		case '@':
+			// Ожидаем @errcheck — единственная поддерживаемая аннотация
+			if isLetter(s.ch) {
+				ident := s.scanIdentifier()
+				if ident == "errcheck" {
+					tok = token.ERRCHECK
+				} else {
+					s.errorf(s.offset, "неизвестная аннотация @%s", ident)
+					tok = token.ILLEGAL
+				}
+			} else {
+				s.error(s.offset, "ожидается имя аннотации после @")
+				tok = token.ILLEGAL
+			}
 		default:
 			// next reports unexpected BOMs - don't repeat
 			if ch != bom {

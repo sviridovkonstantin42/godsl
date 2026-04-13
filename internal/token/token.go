@@ -134,6 +134,7 @@ const (
 	additional_beg
 	// additional tokens, handled in an ad-hoc manner
 	TILDE
+	ERRCHECK // @errcheck
 	additional_end
 )
 
@@ -242,7 +243,8 @@ var tokens = [...]string{
 	TYPE:   "type",
 	VAR:    "var",
 
-	TILDE: "~",
+	TILDE:    "~",
+	ERRCHECK: "@errcheck",
 }
 
 // String returns the string corresponding to the token tok.

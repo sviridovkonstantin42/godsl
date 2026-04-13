@@ -74,6 +74,9 @@ func Walk(v Visitor, node Node) {
 	case *QuestionStmt:
 		Walk(v, n.Stmt)
 
+	case *ErrCheckStmt:
+		Walk(v, n.Stmt)
+
 	case *Field:
 		if n.Doc != nil {
 			Walk(v, n.Doc)

@@ -280,9 +280,16 @@ func (t *Transpiler) transpileTryStmt(tryStmt *ast.TryStmt) []ast.Stmt {
 func (t *Transpiler) transpileTryCatchOnly(tryStmt *ast.TryStmt) []ast.Stmt {
 	var result []ast.Stmt
 	for _, stmt := range tryStmt.Body.List {
-		result = append(result, stmt)
-		if t.hasErrCheckComment(stmt) {
+		if ec, ok := stmt.(*ast.ErrCheckStmt); ok {
+			// @errcheck — синтаксическая аннотация
+			result = append(result, ec.Stmt)
 			result = append(result, t.createErrorCheck(tryStmt.Catches))
+		} else {
+			result = append(result, stmt)
+			if t.hasErrCheckComment(stmt) {
+				// //@errcheck — старый комментарий-синтаксис
+				result = append(result, t.createErrorCheck(tryStmt.Catches))
+			}
 		}
 	}
 	return result
@@ -303,9 +310,14 @@ func (t *Transpiler) transpileTryCatchFinally(tryStmt *ast.TryStmt) []ast.Stmt {
 	// Тело IIFE: try-логика + return false в конце
 	var iifeBody []ast.Stmt
 	for _, stmt := range tryStmt.Body.List {
-		iifeBody = append(iifeBody, stmt)
-		if t.hasErrCheckComment(stmt) {
+		if ec, ok := stmt.(*ast.ErrCheckStmt); ok {
+			iifeBody = append(iifeBody, ec.Stmt)
 			iifeBody = append(iifeBody, t.createErrorCheckIIFE(tryStmt.Catches, catchesHaveReturn))
+		} else {
+			iifeBody = append(iifeBody, stmt)
+			if t.hasErrCheckComment(stmt) {
+				iifeBody = append(iifeBody, t.createErrorCheckIIFE(tryStmt.Catches, catchesHaveReturn))
+			}
 		}
 	}
 	iifeBody = append(iifeBody, &ast.ReturnStmt{
