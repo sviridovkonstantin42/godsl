@@ -776,6 +776,7 @@ type (
 		Try     token.Pos    // position of "try" keyword
 		Body    *BlockStmt   // try block
 		Catches []*CatchStmt // catch clauses; may be empty
+		Finally *BlockStmt   // finally clause; or nil
 	}
 
 	// A CatchStmt node represents a catch clause in a try statement.
@@ -786,6 +787,20 @@ type (
 		ErrorType Expr       // error type; or nil for any error
 		Rparen    token.Pos  // position of ")" (if present)
 		Body      *BlockStmt // catch block
+	}
+
+	// A ThrowStmt node represents a throw statement: throw <expr>
+	// Transpiles to: return <expr>
+	ThrowStmt struct {
+		Throw token.Pos // position of "throw" keyword
+		X     Expr      // the error expression to throw
+	}
+
+	// A QuestionStmt wraps a statement with the ? operator.
+	// Transpiles to the wrapped statement + "if err != nil { return err }".
+	QuestionStmt struct {
+		Stmt     Stmt      // the underlying assign or expression statement
+		Question token.Pos // position of "?"
 	}
 )
 
@@ -877,6 +892,9 @@ func (s *RangeStmt) End() token.Pos  { return s.Body.End() }
 
 func (s *TryStmt) Pos() token.Pos { return s.Try }
 func (s *TryStmt) End() token.Pos {
+	if s.Finally != nil {
+		return s.Finally.End()
+	}
 	if len(s.Catches) > 0 {
 		return s.Catches[len(s.Catches)-1].End()
 	}
@@ -885,6 +903,12 @@ func (s *TryStmt) End() token.Pos {
 
 func (s *CatchStmt) Pos() token.Pos { return s.Catch }
 func (s *CatchStmt) End() token.Pos { return s.Body.End() }
+
+func (s *ThrowStmt) Pos() token.Pos { return s.Throw }
+func (s *ThrowStmt) End() token.Pos { return s.X.End() }
+
+func (s *QuestionStmt) Pos() token.Pos { return s.Stmt.Pos() }
+func (s *QuestionStmt) End() token.Pos { return s.Question + 1 }
 
 // stmtNode() ensures that only statement nodes can be
 // assigned to a Stmt.
@@ -909,8 +933,10 @@ func (*CommClause) stmtNode()     {}
 func (*SelectStmt) stmtNode()     {}
 func (*ForStmt) stmtNode()        {}
 func (*RangeStmt) stmtNode()      {}
-func (*TryStmt) stmtNode()        {}
-func (*CatchStmt) stmtNode()      {}
+func (*TryStmt) stmtNode()       {}
+func (*CatchStmt) stmtNode()     {}
+func (*ThrowStmt) stmtNode()     {}
+func (*QuestionStmt) stmtNode()  {}
 
 // ----------------------------------------------------------------------------
 // Declarations

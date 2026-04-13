@@ -428,6 +428,8 @@ var stmtStart = map[token.Token]bool{
 	token.VAR:         true,
 	token.TRY:         true,
 	token.CATCH:       true,
+	token.FINALLY:     true,
+	token.THROW:       true,
 }
 
 var declStart = map[token.Token]bool{
@@ -2437,6 +2439,9 @@ func (p *parser) parseStmt() (s ast.Stmt) {
 		s = &ast.DeclStmt{Decl: p.parseDecl(stmtStart)}
 	case token.TRY:
 		s = p.parseTryStmt()
+	case token.THROW:
+		s = p.parseThrowStmt()
+		p.expectSemi()
 	case
 		// tokens that may start an expression
 		token.IDENT, token.INT, token.FLOAT, token.IMAG, token.CHAR, token.STRING, token.FUNC, token.LPAREN, // operands
@@ -2447,6 +2452,12 @@ func (p *parser) parseStmt() (s ast.Stmt) {
 		// parsed by parseSimpleStmt - don't expect a semicolon after
 		// them
 		if _, isLabeledStmt := s.(*ast.LabeledStmt); !isLabeledStmt {
+			// Check for ? operator (error propagation shorthand)
+			if p.tok == token.QUESTION {
+				questionPos := p.pos
+				p.next()
+				s = &ast.QuestionStmt{Stmt: s, Question: questionPos}
+			}
 			p.expectSemi()
 		}
 	case token.GO:
@@ -2996,9 +3007,30 @@ func (p *parser) parseTryStmt() *ast.TryStmt {
 		})
 	}
 
+	var finally *ast.BlockStmt
+	if p.tok == token.FINALLY {
+		p.expect(token.FINALLY)
+		finally = p.parseBlockStmt()
+	}
+
 	return &ast.TryStmt{
 		Try:     pos,
 		Body:    body,
 		Catches: catches,
+		Finally: finally,
+	}
+}
+
+func (p *parser) parseThrowStmt() *ast.ThrowStmt {
+	if p.trace {
+		defer un(trace(p, "ThrowStmt"))
+	}
+
+	pos := p.expect(token.THROW)
+	x := p.parseExpr()
+
+	return &ast.ThrowStmt{
+		Throw: pos,
+		X:     x,
 	}
 }

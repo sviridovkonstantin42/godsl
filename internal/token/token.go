@@ -90,6 +90,7 @@ const (
 	RBRACE    // }
 	SEMICOLON // ;
 	COLON     // :
+	QUESTION  // ?
 	operator_end
 
 	keyword_beg
@@ -114,6 +115,8 @@ const (
 
 	TRY
 	CATCH
+	FINALLY
+	THROW
 
 	INTERFACE
 	MAP
@@ -140,8 +143,10 @@ var tokens = [...]string{
 	EOF:     "EOF",
 	COMMENT: "COMMENT",
 
-	TRY:   "try",
-	CATCH: "catch",
+	TRY:     "try",
+	CATCH:   "catch",
+	FINALLY: "finally",
+	THROW:   "throw",
 
 	IDENT:  "IDENT",
 	INT:    "INT",
@@ -205,6 +210,7 @@ var tokens = [...]string{
 	RBRACE:    "}",
 	SEMICOLON: ";",
 	COLON:     ":",
+	QUESTION:  "?",
 
 	BREAK:    "break",
 	CASE:     "case",

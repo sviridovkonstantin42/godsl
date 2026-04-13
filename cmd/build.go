@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -24,8 +26,10 @@ var buildCmd = &cobra.Command{
 			return
 		}
 
+		execDir := goBuildExecDir(buildDir, projectPath)
+
 		execCmd := exec.Command("go", "build", ".")
-		execCmd.Dir = buildDir
+		execCmd.Dir = execDir
 		execCmd.Stdout = os.Stdout
 		execCmd.Stderr = os.Stderr
 		execCmd.Stdin = os.Stdin
@@ -37,6 +41,27 @@ var buildCmd = &cobra.Command{
 
 		fmt.Println("Сборка завершена успешно!")
 	},
+}
+
+// goBuildExecDir возвращает директорию внутри buildDir, соответствующую projectPath.
+// Например: buildDir=build, projectPath=./examples → build/examples
+func goBuildExecDir(buildDir, projectPath string) string {
+	if strings.TrimSpace(projectPath) == "" {
+		return buildDir
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return buildDir
+	}
+	absProject, err := filepath.Abs(projectPath)
+	if err != nil {
+		return buildDir
+	}
+	rel, err := filepath.Rel(cwd, absProject)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return buildDir
+	}
+	return filepath.Join(buildDir, rel)
 }
 
 func init() {

@@ -49,10 +49,11 @@ func Walk(v Visitor, node Node) {
 	case *TryStmt:
 		if v := v.Visit(n); v != nil {
 			Walk(v, n.Body)
-			if n != nil {
-				for _, c := range n.Catches {
-					Walk(v, c)
-				}
+			for _, c := range n.Catches {
+				Walk(v, c)
+			}
+			if n.Finally != nil {
+				Walk(v, n.Finally)
 			}
 		}
 
@@ -66,6 +67,12 @@ func Walk(v Visitor, node Node) {
 			}
 			Walk(v, n.Body)
 		}
+
+	case *ThrowStmt:
+		Walk(v, n.X)
+
+	case *QuestionStmt:
+		Walk(v, n.Stmt)
 
 	case *Field:
 		if n.Doc != nil {

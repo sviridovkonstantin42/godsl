@@ -154,12 +154,14 @@ func (t *Transpiler) transpileStmts(stmts []ast.Stmt) []ast.Stmt {
 	var result []ast.Stmt
 
 	for _, stmt := range stmts {
-		if tryStmt, ok := stmt.(*ast.TryStmt); ok {
-			// Транспилируем try-catch в обычные конструкции
-			transpiled := t.transpileTryStmt(tryStmt)
+		switch s := stmt.(type) {
+		case *ast.TryStmt:
+			transpiled := t.transpileTryStmt(s)
 			result = append(result, transpiled...)
-		} else {
-			// Рекурсивно обрабатываем вложенные блоки
+		case *ast.QuestionStmt:
+			transpiled := t.transpileQuestionStmt(s)
+			result = append(result, transpiled...)
+		default:
 			newStmt := t.transpileStmt(stmt)
 			result = append(result, newStmt)
 		}
@@ -197,26 +199,302 @@ func (t *Transpiler) transpileStmt(stmt ast.Stmt) ast.Stmt {
 				List: t.transpileStmts(s.Body.List),
 			},
 		}
+	case *ast.ThrowStmt:
+		return t.transpileThrowStmt(s)
 	default:
 		return stmt
 	}
 }
 
+// transpileThrowStmt транспилирует throw <expr> → return <expr>
+func (t *Transpiler) transpileThrowStmt(s *ast.ThrowStmt) ast.Stmt {
+	return &ast.ReturnStmt{
+		Return:  token.NoPos,
+		Results: []ast.Expr{s.X},
+	}
+}
+
+// transpileQuestionStmt транспилирует stmt? → stmt + if err != nil { return err }
+// Для AssignStmt (a := f()?): добавляет err в левую часть
+// Для ExprStmt (f()?): генерирует if err := f(); err != nil { return err }
+func (t *Transpiler) transpileQuestionStmt(s *ast.QuestionStmt) []ast.Stmt {
+	switch inner := s.Stmt.(type) {
+	case *ast.AssignStmt:
+		// a := readFile()? → a, err := readFile(); if err != nil { return err }
+		newAssign := &ast.AssignStmt{
+			Lhs: append(inner.Lhs, &ast.Ident{NamePos: token.NoPos, Name: "err"}),
+			TokPos: inner.TokPos,
+			Tok:    inner.Tok,
+			Rhs:    inner.Rhs,
+		}
+		errCheck := t.createErrorCheck(nil)
+		return []ast.Stmt{newAssign, errCheck}
+
+	case *ast.ExprStmt:
+		// f()? → if err := f(); err != nil { return err }
+		ifStmt := &ast.IfStmt{
+			If: token.NoPos,
+			Init: &ast.AssignStmt{
+				Lhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "err"}},
+				TokPos: token.NoPos,
+				Tok:    token.DEFINE,
+				Rhs:    []ast.Expr{inner.X},
+			},
+			Cond: &ast.BinaryExpr{
+				X:     &ast.Ident{NamePos: token.NoPos, Name: "err"},
+				OpPos: token.NoPos,
+				Op:    token.NEQ,
+				Y:     &ast.Ident{NamePos: token.NoPos, Name: "nil"},
+			},
+			Body: &ast.BlockStmt{
+				Lbrace: token.NoPos,
+				List: []ast.Stmt{
+					&ast.ReturnStmt{
+						Return:  token.NoPos,
+						Results: []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "err"}},
+					},
+				},
+				Rbrace: token.NoPos,
+			},
+		}
+		return []ast.Stmt{ifStmt}
+
+	default:
+		// Фолбэк: просто возвращаем оригинальный statement
+		return []ast.Stmt{s.Stmt}
+	}
+}
+
 // transpileTryStmt транспилирует TryStmt в обычные Go конструкции
 func (t *Transpiler) transpileTryStmt(tryStmt *ast.TryStmt) []ast.Stmt {
-	var result []ast.Stmt
+	if tryStmt.Finally == nil {
+		// Без finally — простая транспиляция как раньше
+		return t.transpileTryCatchOnly(tryStmt)
+	}
+	// С finally — используем IIFE чтобы finally выполнялся
+	// сразу после try-catch, а не в конце всей функции
+	return t.transpileTryCatchFinally(tryStmt)
+}
 
-	// Транспилируем содержимое try блока
+// transpileTryCatchOnly транспилирует try-catch без finally (оригинальная логика)
+func (t *Transpiler) transpileTryCatchOnly(tryStmt *ast.TryStmt) []ast.Stmt {
+	var result []ast.Stmt
 	for _, stmt := range tryStmt.Body.List {
 		result = append(result, stmt)
-
-		// Добавляем проверку err != nil только если есть комментарий //@errcheck
 		if t.hasErrCheckComment(stmt) {
-			errorCheck := t.createErrorCheck(tryStmt.Catches)
-			result = append(result, errorCheck)
+			result = append(result, t.createErrorCheck(tryStmt.Catches))
+		}
+	}
+	return result
+}
+
+// transpileTryCatchFinally транспилирует try-catch-finally через IIFE:
+//
+//	_ret := func() bool { <try-catch> }()
+//	<finally>
+//	if _ret { return }
+//
+// Это гарантирует что finally выполнится сразу после try-catch блока,
+// до любого кода после него, и при этом return в catch корректно
+// распространяется на внешнюю функцию.
+func (t *Transpiler) transpileTryCatchFinally(tryStmt *ast.TryStmt) []ast.Stmt {
+	catchesHaveReturn := t.catchesHaveReturn(tryStmt.Catches)
+
+	// Тело IIFE: try-логика + return false в конце
+	var iifeBody []ast.Stmt
+	for _, stmt := range tryStmt.Body.List {
+		iifeBody = append(iifeBody, stmt)
+		if t.hasErrCheckComment(stmt) {
+			iifeBody = append(iifeBody, t.createErrorCheckIIFE(tryStmt.Catches, catchesHaveReturn))
+		}
+	}
+	iifeBody = append(iifeBody, &ast.ReturnStmt{
+		Return:  token.NoPos,
+		Results: []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "false"}},
+	})
+
+	// _ret := func() bool { ... }()
+	var result []ast.Stmt
+	if catchesHaveReturn {
+		result = append(result, &ast.AssignStmt{
+			Lhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "_godslRet"}},
+			TokPos: token.NoPos,
+			Tok:    token.DEFINE,
+			Rhs: []ast.Expr{
+				t.makeBoolIIFE(iifeBody, tryStmt.Try),
+			},
+		})
+	} else {
+		// Нет return в catch — вызываем IIFE без захвата результата
+		result = append(result, &ast.ExprStmt{
+			X: t.makeBoolIIFE(iifeBody, tryStmt.Try),
+		})
+	}
+
+	// Добавляем finally-тело сразу после IIFE
+	result = append(result, tryStmt.Finally.List...)
+
+	// Если catch мог вернуть true — распространяем return
+	if catchesHaveReturn {
+		result = append(result, &ast.IfStmt{
+			If: token.NoPos,
+			Cond: &ast.Ident{NamePos: token.NoPos, Name: "_godslRet"},
+			Body: &ast.BlockStmt{
+				Lbrace: token.NoPos,
+				List:   []ast.Stmt{&ast.ReturnStmt{Return: token.NoPos}},
+				Rbrace: token.NoPos,
+			},
+		})
+	}
+
+	return result
+}
+
+// makeBoolIIFE создаёт func() bool { ... }() с заданным телом
+func (t *Transpiler) makeBoolIIFE(body []ast.Stmt, pos token.Pos) *ast.CallExpr {
+	return &ast.CallExpr{
+		Fun: &ast.FuncLit{
+			Type: &ast.FuncType{
+				Func:   pos,
+				Params: &ast.FieldList{Opening: pos, Closing: pos},
+				Results: &ast.FieldList{
+					List: []*ast.Field{
+						{Type: &ast.Ident{NamePos: pos, Name: "bool"}},
+					},
+				},
+			},
+			Body: &ast.BlockStmt{
+				Lbrace: pos,
+				List:   body,
+				Rbrace: pos,
+			},
+		},
+		Lparen: pos,
+		Rparen: pos,
+	}
+}
+
+// catchesHaveReturn проверяет, есть ли в catch-блоках оператор return
+func (t *Transpiler) catchesHaveReturn(catches []*ast.CatchStmt) bool {
+	for _, c := range catches {
+		for _, stmt := range c.Body.List {
+			if _, ok := stmt.(*ast.ReturnStmt); ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// createErrorCheckIIFE — как createErrorCheck, но внутри IIFE:
+// return в catch заменяется на return true, иначе return false не добавляется
+func (t *Transpiler) createErrorCheckIIFE(catches []*ast.CatchStmt, catchesHaveReturn bool) ast.Stmt {
+	var catchBody []ast.Stmt
+
+	if len(catches) == 0 {
+		catchBody = append(catchBody, &ast.ReturnStmt{
+			Return:  token.NoPos,
+			Results: []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "true"}},
+		})
+	} else {
+		for i, catchStmt := range catches {
+			if catchStmt.ErrorType != nil {
+				typeCheck := t.createTypeCheckIIFE(catchStmt, i == len(catches)-1, catchesHaveReturn)
+				catchBody = append(catchBody, typeCheck)
+			} else {
+				// catch-all: заменяем ReturnStmt → return true
+				body := t.replaceCatchReturns(catchStmt.Body.List, catchesHaveReturn)
+				if catchStmt.ErrorVar != nil {
+					assignment := &ast.AssignStmt{
+						Lhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: catchStmt.ErrorVar.Name}},
+						TokPos: token.NoPos,
+						Tok:    token.ASSIGN,
+						Rhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "err"}},
+					}
+					catchBody = append(catchBody, assignment)
+				}
+				catchBody = append(catchBody, body...)
+				break
+			}
 		}
 	}
 
+	return &ast.IfStmt{
+		If: token.NoPos,
+		Cond: &ast.BinaryExpr{
+			X:     &ast.Ident{NamePos: token.NoPos, Name: "err"},
+			OpPos: token.NoPos,
+			Op:    token.NEQ,
+			Y:     &ast.Ident{NamePos: token.NoPos, Name: "nil"},
+		},
+		Body: &ast.BlockStmt{
+			Lbrace: token.NoPos,
+			List:   catchBody,
+			Rbrace: token.NoPos,
+		},
+	}
+}
+
+// createTypeCheckIIFE — как createTypeCheck, но в IIFE-контексте
+func (t *Transpiler) createTypeCheckIIFE(catchStmt *ast.CatchStmt, isLast bool, catchesHaveReturn bool) ast.Stmt {
+	var condition ast.Expr
+	var init ast.Stmt
+
+	if catchStmt.ErrorVar != nil {
+		init = &ast.AssignStmt{
+			Lhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: catchStmt.ErrorVar.Name}, &ast.Ident{NamePos: token.NoPos, Name: "ok"}},
+			TokPos: token.NoPos,
+			Tok:    token.DEFINE,
+			Rhs:    []ast.Expr{&ast.TypeAssertExpr{X: &ast.Ident{NamePos: token.NoPos, Name: "err"}, Type: catchStmt.ErrorType}},
+		}
+		condition = &ast.Ident{NamePos: token.NoPos, Name: "ok"}
+	} else {
+		init = &ast.AssignStmt{
+			Lhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "_"}, &ast.Ident{NamePos: token.NoPos, Name: "ok"}},
+			TokPos: token.NoPos,
+			Tok:    token.DEFINE,
+			Rhs:    []ast.Expr{&ast.TypeAssertExpr{X: &ast.Ident{NamePos: token.NoPos, Name: "err"}, Type: catchStmt.ErrorType}},
+		}
+		condition = &ast.Ident{NamePos: token.NoPos, Name: "ok"}
+	}
+
+	body := t.replaceCatchReturns(catchStmt.Body.List, catchesHaveReturn)
+
+	ifStmt := &ast.IfStmt{
+		If:   token.NoPos,
+		Init: init,
+		Cond: condition,
+		Body: &ast.BlockStmt{Lbrace: token.NoPos, List: body, Rbrace: token.NoPos},
+	}
+
+	if !isLast {
+		ifStmt.Else = &ast.BlockStmt{
+			List: []ast.Stmt{&ast.ReturnStmt{
+				Return:  token.NoPos,
+				Results: []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "true"}},
+			}},
+		}
+	}
+
+	return ifStmt
+}
+
+// replaceCatchReturns заменяет ReturnStmt в теле catch на return true (для IIFE)
+func (t *Transpiler) replaceCatchReturns(stmts []ast.Stmt, catchesHaveReturn bool) []ast.Stmt {
+	if !catchesHaveReturn {
+		return stmts
+	}
+	var result []ast.Stmt
+	for _, stmt := range stmts {
+		if _, ok := stmt.(*ast.ReturnStmt); ok {
+			result = append(result, &ast.ReturnStmt{
+				Return:  token.NoPos,
+				Results: []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "true"}},
+			})
+		} else {
+			result = append(result, stmt)
+		}
+	}
 	return result
 }
 

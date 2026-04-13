@@ -1541,6 +1541,39 @@ func (p *printer) stmt(stmt ast.Stmt, nextIsRBrace bool) {
 		p.print(blank)
 		p.block(s.Body, 1)
 
+	case *ast.TryStmt:
+		p.print("try", blank)
+		p.block(s.Body, 1)
+		for _, c := range s.Catches {
+			p.stmt(c, nextIsRBrace)
+		}
+		if s.Finally != nil {
+			p.print(blank, "finally", blank)
+			p.block(s.Finally, 1)
+		}
+
+	case *ast.CatchStmt:
+		p.print(blank, "catch")
+		if s.ErrorType != nil {
+			p.print(token.LPAREN)
+			if s.ErrorVar != nil {
+				p.expr(s.ErrorVar)
+				p.print(blank)
+			}
+			p.expr(s.ErrorType)
+			p.print(token.RPAREN)
+		}
+		p.print(blank)
+		p.block(s.Body, 1)
+
+	case *ast.ThrowStmt:
+		p.print("throw", blank)
+		p.expr(s.X)
+
+	case *ast.QuestionStmt:
+		p.stmt(s.Stmt, nextIsRBrace)
+		p.print("?")
+
 	default:
 		panic("unreachable")
 	}

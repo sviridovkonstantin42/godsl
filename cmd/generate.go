@@ -106,11 +106,14 @@ func generateProject(projectPath string, buildDirOverride string, opts GenerateO
 	}
 
 	walkRoot := rootDir
-	relBase := rootDir
+	// relBase всегда берём от cwd, чтобы структура build/ отражала структуру проекта
+	// независимо от того, передан ли конкретный путь (./examples) или нет.
+	// Например: go run . build ./examples → build/examples/main.go, а не build/main.go.
+	relBase := cwd
 	if !fi.IsDir() {
-		// Если передали конкретный файл, то относительные пути считаем от его директории,
-		// чтобы выход получался build/<имя_файла>.go, а не build/.go
-		relBase = filepath.Dir(rootDir)
+		// Если передали конкретный файл — относительные пути от директории файла,
+		// но корень по-прежнему cwd, чтобы build/ был предсказуемым.
+		relBase = cwd
 	}
 
 	cache, err := loadBuildCache(buildDir)

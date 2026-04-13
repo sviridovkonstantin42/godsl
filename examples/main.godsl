@@ -1,23 +1,48 @@
 package main
 
-import "log"
-import "github.com/sviridovkonstantin42/godsl/examples/utils"
+import (
+	"errors"
+	"log"
 
-func main(){
-    try{
-        //@errcheck
-        a, err:=utils.FunctionWithError()
-        log.Println("computed a...")
+	"github.com/sviridovkonstantin42/godsl/examples/utils"
+)
 
-        //@errcheck
-        b, err:=utils.FunctionWithError()
-        log.Println("computed b...")
+// validate демонстрирует throw: явное бросание ошибки
+func validate(s string) error {
+	if s == "" {
+		throw errors.New("validation failed: empty string")
+	}
+	return nil
+}
 
-        //@errcheck
-        c, err:=utils.FunctionWithError()
-        log.Println("computed c...")
-        log.Println(a,b,c)
-    } catch {
-        log.Println(err)
-    }
+// processData демонстрирует оператор ?: автоматический return при ошибке
+func processData() error {
+	a := utils.FunctionWithError()?
+	log.Println("step 1 ok, a =", a)
+
+	b := utils.FunctionWithError()?
+	log.Println("step 2 ok, b =", b)
+
+	validate("")?
+	return nil
+}
+
+func main() {
+	try {
+		//@errcheck
+		a, err := utils.FunctionWithError()
+		log.Println("computed a =", a)
+
+		//@errcheck
+		b, err := utils.FunctionWithError()
+		log.Println("computed b =", b)
+	} catch {
+		return
+	} finally {
+		log.Println("finally: cleanup done")
+	}
+	
+	if err := processData(); err != nil {
+		log.Println("processData failed:", err)
+	}
 }

@@ -24,8 +24,10 @@ var runCmd = &cobra.Command{
 			return
 		}
 
+		execDir := goBuildExecDir(buildDir, projectPath)
+
 		execCmd := exec.Command("go", "run", ".")
-		execCmd.Dir = buildDir
+		execCmd.Dir = execDir
 		execCmd.Stdout = os.Stdout
 		execCmd.Stderr = os.Stderr
 		execCmd.Stdin = os.Stdin
