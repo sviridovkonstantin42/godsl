@@ -161,6 +161,9 @@ func (t *Transpiler) transpileStmts(stmts []ast.Stmt) []ast.Stmt {
 		case *ast.QuestionStmt:
 			transpiled := t.transpileQuestionStmt(s)
 			result = append(result, transpiled...)
+		case *ast.MustStmt:
+			transpiled := t.transpileMustStmt(s)
+			result = append(result, transpiled...)
 		default:
 			newStmt := t.transpileStmt(stmt)
 			result = append(result, newStmt)
@@ -262,6 +265,75 @@ func (t *Transpiler) transpileQuestionStmt(s *ast.QuestionStmt) []ast.Stmt {
 	default:
 		// Фолбэк: просто возвращаем оригинальный statement
 		return []ast.Stmt{s.Stmt}
+	}
+}
+
+// transpileMustStmt транспилирует MustStmt:
+//
+//	db := must sql.Open(...) → db, err := sql.Open(...); if err != nil { panic(err) }
+//	must f()                 → if err := f(); err != nil { panic(err) }
+func (t *Transpiler) transpileMustStmt(s *ast.MustStmt) []ast.Stmt {
+	switch inner := s.Stmt.(type) {
+	case *ast.AssignStmt:
+		// db := must sql.Open(...) → db, err := sql.Open(...); if err != nil { panic(err) }
+		newAssign := &ast.AssignStmt{
+			Lhs:    append(inner.Lhs, &ast.Ident{NamePos: token.NoPos, Name: "err"}),
+			TokPos: inner.TokPos,
+			Tok:    inner.Tok,
+			Rhs:    inner.Rhs,
+		}
+		panicCheck := &ast.IfStmt{
+			If: token.NoPos,
+			Cond: &ast.BinaryExpr{
+				X:     &ast.Ident{NamePos: token.NoPos, Name: "err"},
+				OpPos: token.NoPos,
+				Op:    token.NEQ,
+				Y:     &ast.Ident{NamePos: token.NoPos, Name: "nil"},
+			},
+			Body: &ast.BlockStmt{
+				Lbrace: token.NoPos,
+				List:   []ast.Stmt{createPanicErr()},
+				Rbrace: token.NoPos,
+			},
+		}
+		return []ast.Stmt{newAssign, panicCheck}
+
+	case *ast.ExprStmt:
+		// must f() → if err := f(); err != nil { panic(err) }
+		ifStmt := &ast.IfStmt{
+			If: token.NoPos,
+			Init: &ast.AssignStmt{
+				Lhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "err"}},
+				TokPos: token.NoPos,
+				Tok:    token.DEFINE,
+				Rhs:    []ast.Expr{inner.X},
+			},
+			Cond: &ast.BinaryExpr{
+				X:     &ast.Ident{NamePos: token.NoPos, Name: "err"},
+				OpPos: token.NoPos,
+				Op:    token.NEQ,
+				Y:     &ast.Ident{NamePos: token.NoPos, Name: "nil"},
+			},
+			Body: &ast.BlockStmt{
+				Lbrace: token.NoPos,
+				List:   []ast.Stmt{createPanicErr()},
+				Rbrace: token.NoPos,
+			},
+		}
+		return []ast.Stmt{ifStmt}
+
+	default:
+		return []ast.Stmt{s.Stmt}
+	}
+}
+
+// createPanicErr создаёт вызов panic(err).
+func createPanicErr() ast.Stmt {
+	return &ast.ExprStmt{
+		X: &ast.CallExpr{
+			Fun:  &ast.Ident{NamePos: token.NoPos, Name: "panic"},
+			Args: []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "err"}},
+		},
 	}
 }
 

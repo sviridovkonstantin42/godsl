@@ -810,6 +810,14 @@ type (
 		At   token.Pos // position of @errcheck
 		Stmt Stmt      // the statement to error-check
 	}
+
+	// A MustStmt wraps an assign or expression statement with the must keyword.
+	// x := must f()  → x, err := f(); if err != nil { panic(err) }
+	// must f()       → if err := f(); err != nil { panic(err) }
+	MustStmt struct {
+		Must token.Pos // position of "must" keyword
+		Stmt Stmt      // the underlying assign or expression statement
+	}
 )
 
 // Pos and End implementations for statement nodes.
@@ -921,6 +929,9 @@ func (s *QuestionStmt) End() token.Pos { return s.Question + 1 }
 func (s *ErrCheckStmt) Pos() token.Pos { return s.At }
 func (s *ErrCheckStmt) End() token.Pos { return s.Stmt.End() }
 
+func (s *MustStmt) Pos() token.Pos { return s.Must }
+func (s *MustStmt) End() token.Pos { return s.Stmt.End() }
+
 // stmtNode() ensures that only statement nodes can be
 // assigned to a Stmt.
 func (*BadStmt) stmtNode()        {}
@@ -949,6 +960,7 @@ func (*CatchStmt) stmtNode()     {}
 func (*ThrowStmt) stmtNode()    {}
 func (*QuestionStmt) stmtNode() {}
 func (*ErrCheckStmt) stmtNode() {}
+func (*MustStmt) stmtNode()     {}
 
 // ----------------------------------------------------------------------------
 // Declarations

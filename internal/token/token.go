@@ -117,6 +117,7 @@ const (
 	CATCH
 	FINALLY
 	THROW
+	MUST
 
 	INTERFACE
 	MAP
@@ -148,6 +149,7 @@ var tokens = [...]string{
 	CATCH:   "catch",
 	FINALLY: "finally",
 	THROW:   "throw",
+	MUST:    "must",
 
 	IDENT:  "IDENT",
 	INT:    "INT",

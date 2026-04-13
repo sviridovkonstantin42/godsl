@@ -24,6 +24,8 @@ func processData() error {
 	log.Println("step 2 ok, b =", b)
 
 	validate("")?
+	must validate("")
+
 	return nil
 }
 

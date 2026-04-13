@@ -1939,6 +1939,13 @@ func (p *parser) parseSimpleStmt(mode int) (ast.Stmt, bool) {
 			p.next()
 			y = []ast.Expr{&ast.UnaryExpr{OpPos: pos, Op: token.RANGE, X: p.parseRhs()}}
 			isRange = true
+		} else if p.tok == token.MUST {
+			// db := must sql.Open(...) — must as RHS modifier
+			mustPos := p.pos
+			p.next() // consume 'must'
+			y = p.parseList(true)
+			innerAssign := &ast.AssignStmt{Lhs: x, TokPos: pos, Tok: tok, Rhs: y}
+			return &ast.MustStmt{Must: mustPos, Stmt: innerAssign}, false
 		} else {
 			y = p.parseList(true)
 		}
@@ -2442,6 +2449,9 @@ func (p *parser) parseStmt() (s ast.Stmt) {
 		s = p.parseTryStmt()
 	case token.THROW:
 		s = p.parseThrowStmt()
+		p.expectSemi()
+	case token.MUST:
+		s = p.parseMustStmt()
 		p.expectSemi()
 	case token.ERRCHECK:
 		s = p.parseErrCheckStmt()
@@ -3051,5 +3061,21 @@ func (p *parser) parseThrowStmt() *ast.ThrowStmt {
 	return &ast.ThrowStmt{
 		Throw: pos,
 		X:     x,
+	}
+}
+
+// parseMustStmt handles standalone: must f()
+// The assignment form (db := must f()) is handled in parseSimpleStmt.
+func (p *parser) parseMustStmt() *ast.MustStmt {
+	if p.trace {
+		defer un(trace(p, "MustStmt"))
+	}
+
+	pos := p.expect(token.MUST)
+	x := p.parseExpr()
+
+	return &ast.MustStmt{
+		Must: pos,
+		Stmt: &ast.ExprStmt{X: x},
 	}
 }
