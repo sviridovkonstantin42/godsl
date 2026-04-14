@@ -270,8 +270,8 @@ func (r *resolver) Visit(node ast.Node) ast.Visitor {
 		if n.ErrorVar != nil {
 			r.declare(n, nil, r.topScope, ast.Var, n.ErrorVar)
 		}
-		if n.ErrorType != nil {
-			ast.Walk(r, n.ErrorType)
+		for _, t := range n.ErrorTypes {
+			ast.Walk(r, t)
 		}
 		r.walkStmts(n.Body.List)
 

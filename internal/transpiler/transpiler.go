@@ -482,7 +482,7 @@ func (t *Transpiler) createErrorCheckIIFE(catches []*ast.CatchStmt, catchesHaveR
 		})
 	} else {
 		for i, catchStmt := range catches {
-			if catchStmt.ErrorType != nil {
+			if len(catchStmt.ErrorTypes) > 0 {
 				typeCheck := t.createTypeCheckIIFE(catchStmt, i == len(catches)-1, catchesHaveReturn)
 				catchBody = append(catchBody, typeCheck)
 			} else {
@@ -523,26 +523,42 @@ func (t *Transpiler) createErrorCheckIIFE(catches []*ast.CatchStmt, catchesHaveR
 func (t *Transpiler) createTypeCheckIIFE(catchStmt *ast.CatchStmt, isLast bool, catchesHaveReturn bool) ast.Stmt {
 	var condition ast.Expr
 	var init ast.Stmt
+	var extraBodyPrefix []ast.Stmt
 
-	if catchStmt.ErrorVar != nil {
-		init = &ast.AssignStmt{
-			Lhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: catchStmt.ErrorVar.Name}, &ast.Ident{NamePos: token.NoPos, Name: "ok"}},
-			TokPos: token.NoPos,
-			Tok:    token.DEFINE,
-			Rhs:    []ast.Expr{&ast.TypeAssertExpr{X: &ast.Ident{NamePos: token.NoPos, Name: "err"}, Type: catchStmt.ErrorType}},
+	if len(catchStmt.ErrorTypes) > 1 {
+		// Multi-type: условие через IIFE func() bool { ... }()
+		condition = t.makeMultiTypeCheck(catchStmt.ErrorTypes)
+		if catchStmt.ErrorVar != nil {
+			// e := err  (тип — error, конкретный тип не известен)
+			extraBodyPrefix = []ast.Stmt{&ast.AssignStmt{
+				Lhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: catchStmt.ErrorVar.Name}},
+				TokPos: token.NoPos,
+				Tok:    token.DEFINE,
+				Rhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "err"}},
+			}}
 		}
-		condition = &ast.Ident{NamePos: token.NoPos, Name: "ok"}
 	} else {
-		init = &ast.AssignStmt{
-			Lhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "_"}, &ast.Ident{NamePos: token.NoPos, Name: "ok"}},
-			TokPos: token.NoPos,
-			Tok:    token.DEFINE,
-			Rhs:    []ast.Expr{&ast.TypeAssertExpr{X: &ast.Ident{NamePos: token.NoPos, Name: "err"}, Type: catchStmt.ErrorType}},
+		// Single type
+		typ := catchStmt.ErrorTypes[0]
+		if catchStmt.ErrorVar != nil {
+			init = &ast.AssignStmt{
+				Lhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: catchStmt.ErrorVar.Name}, &ast.Ident{NamePos: token.NoPos, Name: "ok"}},
+				TokPos: token.NoPos,
+				Tok:    token.DEFINE,
+				Rhs:    []ast.Expr{&ast.TypeAssertExpr{X: &ast.Ident{NamePos: token.NoPos, Name: "err"}, Type: typ}},
+			}
+		} else {
+			init = &ast.AssignStmt{
+				Lhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "_"}, &ast.Ident{NamePos: token.NoPos, Name: "ok"}},
+				TokPos: token.NoPos,
+				Tok:    token.DEFINE,
+				Rhs:    []ast.Expr{&ast.TypeAssertExpr{X: &ast.Ident{NamePos: token.NoPos, Name: "err"}, Type: typ}},
+			}
 		}
 		condition = &ast.Ident{NamePos: token.NoPos, Name: "ok"}
 	}
 
-	body := t.replaceCatchReturns(catchStmt.Body.List, catchesHaveReturn)
+	body := append(extraBodyPrefix, t.replaceCatchReturns(catchStmt.Body.List, catchesHaveReturn)...)
 
 	ifStmt := &ast.IfStmt{
 		If:   token.NoPos,
@@ -666,7 +682,7 @@ func (t *Transpiler) createErrorCheck(catches []*ast.CatchStmt) ast.Stmt {
 	} else {
 		// Обрабатываем catch блоки
 		for i, catchStmt := range catches {
-			if catchStmt.ErrorType != nil {
+			if len(catchStmt.ErrorTypes) > 0 {
 				// Специфичный catch для определенного типа ошибки
 				typeCheck := t.createTypeCheck(catchStmt, i == len(catches)-1)
 				catchBody = append(catchBody, typeCheck)
@@ -716,80 +732,104 @@ func (t *Transpiler) createErrorCheck(catches []*ast.CatchStmt) ast.Stmt {
 	}
 }
 
+// makeMultiTypeCheck строит IIFE-условие для нескольких типов:
+//
+//	func() bool {
+//	    if _, ok := err.(T1); ok { return true }
+//	    if _, ok := err.(T2); ok { return true }
+//	    return false
+//	}()
+func (t *Transpiler) makeMultiTypeCheck(types []ast.Expr) *ast.CallExpr {
+	var body []ast.Stmt
+	for _, typ := range types {
+		check := &ast.IfStmt{
+			If: token.NoPos,
+			Init: &ast.AssignStmt{
+				Lhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "_"}, &ast.Ident{NamePos: token.NoPos, Name: "ok"}},
+				TokPos: token.NoPos,
+				Tok:    token.DEFINE,
+				Rhs:    []ast.Expr{&ast.TypeAssertExpr{X: &ast.Ident{NamePos: token.NoPos, Name: "err"}, Type: typ}},
+			},
+			Cond: &ast.Ident{NamePos: token.NoPos, Name: "ok"},
+			Body: &ast.BlockStmt{
+				List: []ast.Stmt{&ast.ReturnStmt{
+					Return:  token.NoPos,
+					Results: []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "true"}},
+				}},
+			},
+		}
+		body = append(body, check)
+	}
+	body = append(body, &ast.ReturnStmt{
+		Return:  token.NoPos,
+		Results: []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "false"}},
+	})
+
+	return &ast.CallExpr{
+		Fun: &ast.FuncLit{
+			Type: &ast.FuncType{
+				Params: &ast.FieldList{},
+				Results: &ast.FieldList{
+					List: []*ast.Field{{Type: &ast.Ident{NamePos: token.NoPos, Name: "bool"}}},
+				},
+			},
+			Body: &ast.BlockStmt{List: body},
+		},
+	}
+}
+
 // createTypeCheck создает проверку типа ошибки для конкретного catch
 func (t *Transpiler) createTypeCheck(catchStmt *ast.CatchStmt, isLast bool) ast.Stmt {
 	var condition ast.Expr
 	var init ast.Stmt
+	var bodyPrefix []ast.Stmt
 
-	if catchStmt.ErrorVar != nil {
-		// catchVar, ok := err.(ErrorType)
-		init = &ast.AssignStmt{
-			Lhs: []ast.Expr{
-				&ast.Ident{
-					NamePos: token.NoPos,
-					Name:    catchStmt.ErrorVar.Name,
-				},
-				&ast.Ident{
-					NamePos: token.NoPos,
-					Name:    "ok",
-				},
-			},
-			TokPos: token.NoPos,
-			Tok:    token.DEFINE,
-			Rhs: []ast.Expr{
-				&ast.TypeAssertExpr{
-					X:      &ast.Ident{NamePos: token.NoPos, Name: "err"},
-					Lparen: token.NoPos,
-					Type:   catchStmt.ErrorType,
-					Rparen: token.NoPos,
-				},
-			},
+	if len(catchStmt.ErrorTypes) > 1 {
+		// Multi-type: условие через IIFE
+		condition = t.makeMultiTypeCheck(catchStmt.ErrorTypes)
+		if catchStmt.ErrorVar != nil {
+			bodyPrefix = []ast.Stmt{&ast.AssignStmt{
+				Lhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: catchStmt.ErrorVar.Name}},
+				TokPos: token.NoPos,
+				Tok:    token.DEFINE,
+				Rhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "err"}},
+			}}
 		}
-		condition = &ast.Ident{NamePos: token.NoPos, Name: "ok"}
 	} else {
-		// _, ok := err.(ErrorType)
-		init = &ast.AssignStmt{
-			Lhs: []ast.Expr{
-				&ast.Ident{NamePos: token.NoPos, Name: "_"},
-				&ast.Ident{NamePos: token.NoPos, Name: "ok"},
-			},
-			TokPos: token.NoPos,
-			Tok:    token.DEFINE,
-			Rhs: []ast.Expr{
-				&ast.TypeAssertExpr{
-					X:      &ast.Ident{NamePos: token.NoPos, Name: "err"},
-					Lparen: token.NoPos,
-					Type:   catchStmt.ErrorType,
-					Rparen: token.NoPos,
-				},
-			},
+		typ := catchStmt.ErrorTypes[0]
+		if catchStmt.ErrorVar != nil {
+			// catchVar, ok := err.(ErrorType)
+			init = &ast.AssignStmt{
+				Lhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: catchStmt.ErrorVar.Name}, &ast.Ident{NamePos: token.NoPos, Name: "ok"}},
+				TokPos: token.NoPos,
+				Tok:    token.DEFINE,
+				Rhs:    []ast.Expr{&ast.TypeAssertExpr{X: &ast.Ident{NamePos: token.NoPos, Name: "err"}, Type: typ}},
+			}
+		} else {
+			// _, ok := err.(ErrorType)
+			init = &ast.AssignStmt{
+				Lhs:    []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "_"}, &ast.Ident{NamePos: token.NoPos, Name: "ok"}},
+				TokPos: token.NoPos,
+				Tok:    token.DEFINE,
+				Rhs:    []ast.Expr{&ast.TypeAssertExpr{X: &ast.Ident{NamePos: token.NoPos, Name: "err"}, Type: typ}},
+			}
 		}
 		condition = &ast.Ident{NamePos: token.NoPos, Name: "ok"}
 	}
+
+	body := append(bodyPrefix, catchStmt.Body.List...)
 
 	ifStmt := &ast.IfStmt{
 		If:   token.NoPos,
 		Init: init,
 		Cond: condition,
-		Body: &ast.BlockStmt{
-			Lbrace: token.NoPos,
-			List:   catchStmt.Body.List,
-			Rbrace: token.NoPos,
-		},
+		Body: &ast.BlockStmt{Lbrace: token.NoPos, List: body, Rbrace: token.NoPos},
 	}
 
-	// Если это не последний catch и нет else, добавляем return err
 	if !isLast {
 		ifStmt.Else = &ast.BlockStmt{
 			Lbrace: token.NoPos,
-			List: []ast.Stmt{
-				&ast.ReturnStmt{
-					Return: token.NoPos,
-					Results: []ast.Expr{
-						&ast.Ident{NamePos: token.NoPos, Name: "err"},
-					},
-				},
-			},
+			List:   []ast.Stmt{&ast.ReturnStmt{Return: token.NoPos, Results: []ast.Expr{&ast.Ident{NamePos: token.NoPos, Name: "err"}}}},
 			Rbrace: token.NoPos,
 		}
 	}

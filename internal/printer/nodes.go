@@ -1554,13 +1554,18 @@ func (p *printer) stmt(stmt ast.Stmt, nextIsRBrace bool) {
 
 	case *ast.CatchStmt:
 		p.print(blank, "catch")
-		if s.ErrorType != nil {
+		if len(s.ErrorTypes) > 0 {
 			p.print(token.LPAREN)
 			if s.ErrorVar != nil {
 				p.expr(s.ErrorVar)
 				p.print(blank)
 			}
-			p.expr(s.ErrorType)
+			for i, typ := range s.ErrorTypes {
+				if i > 0 {
+					p.print(blank, token.OR, blank)
+				}
+				p.expr(typ)
+			}
 			p.print(token.RPAREN)
 		}
 		p.print(blank)

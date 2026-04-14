@@ -781,12 +781,12 @@ type (
 
 	// A CatchStmt node represents a catch clause in a try statement.
 	CatchStmt struct {
-		Catch     token.Pos  // position of "catch" keyword
-		Lparen    token.Pos  // position of "(" (if present)
-		ErrorVar  *Ident     // error variable name; or nil for catch-all
-		ErrorType Expr       // error type; or nil for any error
-		Rparen    token.Pos  // position of ")" (if present)
-		Body      *BlockStmt // catch block
+		Catch      token.Pos  // position of "catch" keyword
+		Lparen     token.Pos  // position of "(" (if present)
+		ErrorVar   *Ident     // error variable name; or nil for catch-all
+		ErrorTypes []Expr     // error types; nil = catch-all, one or more types
+		Rparen     token.Pos  // position of ")" (if present)
+		Body       *BlockStmt // catch block
 	}
 
 	// A ThrowStmt node represents a throw statement: throw <expr>

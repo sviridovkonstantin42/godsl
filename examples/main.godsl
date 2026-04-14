@@ -7,6 +7,13 @@ import (
 	"github.com/sviridovkonstantin42/godsl/examples/utils"
 )
 
+type ErrNotFound struct {
+}
+
+func (e ErrNotFound) Error() string {
+	return ""
+}
+
 // validate демонстрирует throw: явное бросание ошибки
 func validate(s string) error {
 	if s == "" {
@@ -19,13 +26,10 @@ func validate(s string) error {
 func processData() error {
 	a := utils.FunctionWithError()?
 	log.Println("step 1 ok, a =", a)
-
 	b := utils.FunctionWithError()?
 	log.Println("step 2 ok, b =", b)
-
 	validate("")?
 	must validate("")
-
 	return nil
 }
 
@@ -38,12 +42,12 @@ func main() {
 		@errcheck
 		b, err := utils.FunctionWithError()
 		log.Println("computed b =", b)
-	} catch {
+	} catch(ErrNotFound) {
 		return
 	} finally {
 		log.Println("finally: cleanup done")
 	}
-	
+
 	if err := processData(); err != nil {
 		log.Println("processData failed:", err)
 	}

@@ -25,6 +25,13 @@ var generateCmd = &cobra.Command{
 		}
 
 		clean, _ := cmd.Flags().GetBool("clean")
+		watch, _ := cmd.Flags().GetBool("watch")
+
+		if watch {
+			watchGenerate(projectPath, clean)
+			return
+		}
+
 		if _, err := generateProject(projectPath, "", GenerateOptions{Clean: clean}); err != nil {
 			fmt.Printf("Ошибка: %v\n", err)
 			return
@@ -35,6 +42,7 @@ var generateCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(generateCmd)
 	generateCmd.Flags().Bool("clean", false, "Полная пересборка build (без инкремента)")
+	generateCmd.Flags().BoolP("watch", "w", false, "Перегенерировать при изменении .godsl файлов")
 }
 
 type FileTask struct {

@@ -62,8 +62,8 @@ func Walk(v Visitor, node Node) {
 			if n.ErrorVar != nil {
 				Walk(v, n.ErrorVar)
 			}
-			if n.ErrorType != nil {
-				Walk(v, n.ErrorType)
+			for _, t := range n.ErrorTypes {
+				Walk(v, t)
 			}
 			Walk(v, n.Body)
 		}

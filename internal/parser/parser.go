@@ -2974,6 +2974,66 @@ func packIndexExpr(x ast.Expr, lbrack token.Pos, exprs []ast.Expr, rbrack token.
 	}
 }
 
+// parseCatchTypeList парсит содержимое скобок catch: [errorVar] Type1 [| Type2 ...]
+//
+// Правило disambiguации:
+//   - если первый IDENT идёт следом за другим IDENT → первый — errorVar, дальше типы
+//   - иначе первый IDENT (или любой тип) — начало типов
+func (p *parser) parseCatchTypeList() (errorVar *ast.Ident, errorTypes []ast.Expr) {
+	if p.tok == token.RPAREN {
+		return // пустые скобки — catch-all с ()
+	}
+
+	// Если первый токен — идентификатор, нужно понять: это errorVar или тип?
+	if p.tok == token.IDENT {
+		firstPos := p.pos
+		firstName := p.lit
+		p.next() // предварительно потребляем
+
+		switch p.tok {
+		case token.IDENT:
+			// "e SomeError" — первый был errorVar
+			errorVar = &ast.Ident{NamePos: firstPos, Name: firstName}
+			// дальше парсим список типов
+
+		case token.PERIOD:
+			// "pkg.SomeError" — квалифицированный тип, собираем SelectorExpr вручную
+			p.next() // потребляем '.'
+			sel := p.parseIdent()
+			firstType := &ast.SelectorExpr{
+				X:   &ast.Ident{NamePos: firstPos, Name: firstName},
+				Sel: sel,
+			}
+			errorTypes = append(errorTypes, firstType)
+			// проверяем продолжение '|'
+			for p.tok == token.OR {
+				p.next()
+				errorTypes = append(errorTypes, p.parseType())
+			}
+			return
+
+		default:
+			// "SomeError" или "SomeError | OtherError" — первый был типом
+			errorTypes = append(errorTypes, &ast.Ident{NamePos: firstPos, Name: firstName})
+			for p.tok == token.OR {
+				p.next()
+				errorTypes = append(errorTypes, p.parseType())
+			}
+			return
+		}
+	}
+
+	// Парсим список типов (errorVar уже потреблён или не было IDENT)
+	for p.tok != token.RPAREN {
+		errorTypes = append(errorTypes, p.parseType())
+		if p.tok != token.OR {
+			break
+		}
+		p.next() // потребляем '|'
+	}
+	return
+}
+
 func (p *parser) parseTryStmt() *ast.TryStmt {
 	defer decNestLev(incNestLev(p))
 	if p.trace {
@@ -2989,35 +3049,23 @@ func (p *parser) parseTryStmt() *ast.TryStmt {
 
 		var lparen, rparen token.Pos
 		var errorVar *ast.Ident
-		var errorType ast.Expr
+		var errorTypes []ast.Expr
 
 		if p.tok == token.LPAREN {
 			lparen = p.expect(token.LPAREN)
-
-			if p.tok != token.RPAREN {
-				if p.tok == token.IDENT {
-					errorVar = p.parseIdent()
-				}
-				// тип может идти после имени или быть единственным
-				if p.tok != token.RPAREN {
-					if errorVar != nil {
-						p.expect(token.IDENT) // пробел между именем и типом
-					}
-					errorType = p.parseType()
-				}
-			}
+			errorVar, errorTypes = p.parseCatchTypeList()
 			rparen = p.expect(token.RPAREN)
 		}
 
 		catchBody := p.parseBlockStmt()
 
 		catches = append(catches, &ast.CatchStmt{
-			Catch:     catchPos,
-			Lparen:    lparen,
-			ErrorVar:  errorVar,
-			ErrorType: errorType,
-			Rparen:    rparen,
-			Body:      catchBody,
+			Catch:      catchPos,
+			Lparen:     lparen,
+			ErrorVar:   errorVar,
+			ErrorTypes: errorTypes,
+			Rparen:     rparen,
+			Body:       catchBody,
 		})
 	}
 
