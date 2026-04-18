@@ -1,0 +1,33 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+)
+
+// validate проверяет строку и бросает ошибку через throw
+func validate(s string) error {
+	if s == "" {
+		throw errors.New("validation failed: empty string")
+	}
+	if len(s) < 3 {
+		throw fmt.Errorf("validation failed: too short (%d chars)", len(s))
+	}
+	return nil
+}
+
+func main() {
+	if err := validate(""); err != nil {
+		fmt.Println("Error:", err)
+	}
+
+	if err := validate("hi"); err != nil {
+		fmt.Println("Error:", err)
+	}
+
+	if err := validate("hello"); err != nil {
+		fmt.Println("Error:", err)
+	} else {
+		fmt.Println("OK: hello is valid")
+	}
+}

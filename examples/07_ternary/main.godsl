@@ -1,0 +1,31 @@
+package main
+
+import "fmt"
+
+func abs(x int) any {
+	return x >= 0 ? x : -x
+}
+
+func classify(x int) any {
+	return x > 0 ? "positive" : x < 0 ? "negative" : "zero"
+}
+
+func max(a, b int) any {
+	return a > b ? a : b
+}
+
+func main() {
+	fmt.Println("abs(-5) =", abs(-5))
+	fmt.Println("abs(7)  =", abs(7))
+
+	fmt.Println("classify(-3) =", classify(-3))
+	fmt.Println("classify(0)  =", classify(0))
+	fmt.Println("classify(5)  =", classify(5))
+
+	fmt.Println("max(3, 7) =", max(3, 7))
+	fmt.Println("max(9, 2) =", max(9, 2))
+
+	// Тернарный в аргументе функции
+	flag := true
+	fmt.Println("flag is", flag ? "enabled" : "disabled")
+}

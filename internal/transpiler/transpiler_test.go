@@ -1140,3 +1140,110 @@ func foo() error { throw errors.New("e") }`,
 		})
 	}
 }
+
+// ─── ternary operator ─────────────────────────────────────────────────────────
+
+func TestTranspileFile_Ternary_BasicAssignment(t *testing.T) {
+	src := `package main
+
+func foo(x int) any {
+	result := x > 0 ? "positive" : "non-positive"
+	return result
+}
+`
+	out := transpileOK(t, src)
+	assertValidGo(t, out)
+	assertContains(t, out, "if x > 0")
+	assertContains(t, out, `"positive"`)
+	assertContains(t, out, `"non-positive"`)
+	assertNotContains(t, out, "?")
+}
+
+func TestTranspileFile_Ternary_ReturnExpr(t *testing.T) {
+	src := `package main
+
+func abs(x int) any {
+	return x >= 0 ? x : -x
+}
+`
+	out := transpileOK(t, src)
+	assertValidGo(t, out)
+	assertContains(t, out, "if x >= 0")
+	assertContains(t, out, "return x")
+	assertContains(t, out, "return -x")
+	assertNotContains(t, out, "?")
+}
+
+func TestTranspileFile_Ternary_AsCallArgument(t *testing.T) {
+	src := `package main
+
+import "fmt"
+
+func foo(flag bool) {
+	fmt.Println(flag ? "yes" : "no")
+}
+`
+	out := transpileOK(t, src)
+	assertValidGo(t, out)
+	assertContains(t, out, "fmt.Println")
+	assertContains(t, out, `"yes"`)
+	assertContains(t, out, `"no"`)
+	assertNotContains(t, out, "?")
+}
+
+func TestTranspileFile_Ternary_Nested(t *testing.T) {
+	src := `package main
+
+func classify(x int) any {
+	result := x > 0 ? "positive" : x < 0 ? "negative" : "zero"
+	return result
+}
+`
+	out := transpileOK(t, src)
+	assertValidGo(t, out)
+	assertContains(t, out, "if x > 0")
+	assertContains(t, out, `"positive"`)
+	assertContains(t, out, `"negative"`)
+	assertContains(t, out, `"zero"`)
+	assertNotContains(t, out, "?")
+}
+
+func TestTranspileFile_Ternary_WithBooleanCondition(t *testing.T) {
+	src := `package main
+
+func foo(a, b int) any {
+	max := a > b ? a : b
+	return max
+}
+`
+	out := transpileOK(t, src)
+	assertValidGo(t, out)
+	assertContains(t, out, "if a > b")
+	assertNotContains(t, out, "?")
+}
+
+func TestTranspileFile_Ternary_InsideTryCatch(t *testing.T) {
+	src := `package main
+
+import "fmt"
+
+func foo(flag bool) error {
+	try {
+		@errcheck
+		_, err := bar()
+		fmt.Println(flag ? "ok" : "fail")
+	} catch {
+		return err
+	}
+	return nil
+}
+
+func bar() (int, error) { return 0, nil }
+`
+	out := transpileOK(t, src)
+	assertValidGo(t, out)
+	assertContains(t, out, "if err != nil")
+	assertContains(t, out, `"ok"`)
+	assertContains(t, out, `"fail"`)
+	assertNotContains(t, out, "?")
+}

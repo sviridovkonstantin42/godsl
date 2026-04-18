@@ -426,6 +426,16 @@ type (
 		Colon token.Pos // position of ":"
 		Value Expr
 	}
+
+	// A TernaryExpr node represents a ternary conditional expression.
+	// Syntax: Cond ? Then : Else
+	TernaryExpr struct {
+		Cond     Expr      // condition
+		Question token.Pos // position of "?"
+		Then     Expr      // value when condition is true
+		Colon    token.Pos // position of ":"
+		Else     Expr      // value when condition is false
+	}
 )
 
 // The direction of a channel type is indicated by a bit
@@ -512,6 +522,7 @@ func (x *StarExpr) Pos() token.Pos       { return x.Star }
 func (x *UnaryExpr) Pos() token.Pos      { return x.OpPos }
 func (x *BinaryExpr) Pos() token.Pos     { return x.X.Pos() }
 func (x *KeyValueExpr) Pos() token.Pos   { return x.Key.Pos() }
+func (x *TernaryExpr) Pos() token.Pos    { return x.Cond.Pos() }
 func (x *ArrayType) Pos() token.Pos      { return x.Lbrack }
 func (x *StructType) Pos() token.Pos     { return x.Struct }
 func (x *FuncType) Pos() token.Pos {
@@ -546,6 +557,7 @@ func (x *StarExpr) End() token.Pos       { return x.X.End() }
 func (x *UnaryExpr) End() token.Pos      { return x.X.End() }
 func (x *BinaryExpr) End() token.Pos     { return x.Y.End() }
 func (x *KeyValueExpr) End() token.Pos   { return x.Value.End() }
+func (x *TernaryExpr) End() token.Pos    { return x.Else.End() }
 func (x *ArrayType) End() token.Pos      { return x.Elt.End() }
 func (x *StructType) End() token.Pos     { return x.Fields.End() }
 func (x *FuncType) End() token.Pos {
@@ -577,6 +589,7 @@ func (*StarExpr) exprNode()       {}
 func (*UnaryExpr) exprNode()      {}
 func (*BinaryExpr) exprNode()     {}
 func (*KeyValueExpr) exprNode()   {}
+func (*TernaryExpr) exprNode()    {}
 
 func (*ArrayType) exprNode()     {}
 func (*StructType) exprNode()    {}

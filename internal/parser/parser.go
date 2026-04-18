@@ -50,6 +50,12 @@ type parser struct {
 	tok token.Token // one token look-ahead
 	lit string      // token literal
 
+	// One-token lookahead buffer (used to disambiguate ternary ? from QuestionStmt ?)
+	peekValid bool
+	peekPos   token.Pos
+	peekTok   token.Token
+	peekLit   string
+
 	// Error recovery
 	// (used to limit the number of calls to parser.advance
 	// w/o making scanning progress - avoids potential endless
@@ -145,6 +151,16 @@ func (p *parser) next0() {
 		}
 	}
 
+	// Consume from the peek buffer if available.
+	if p.peekValid {
+		p.pos, p.tok, p.lit = p.peekPos, p.peekTok, p.peekLit
+		p.peekValid = false
+		if p.tok != token.COMMENT {
+			p.top = false
+		}
+		return
+	}
+
 	for {
 		p.pos, p.tok, p.lit = p.scanner.Scan()
 		if p.tok == token.COMMENT {
@@ -162,6 +178,26 @@ func (p *parser) next0() {
 		}
 		break
 	}
+}
+
+// peekNextToken returns the token that follows the current one, without consuming it.
+// Used to disambiguate ternary ? from statement-suffix ?.
+func (p *parser) peekNextToken() token.Token {
+	if p.peekValid {
+		return p.peekTok
+	}
+	// Scan ahead, skipping comments (unless ParseComments mode is set).
+	for {
+		p.peekPos, p.peekTok, p.peekLit = p.scanner.Scan()
+		if p.peekTok == token.COMMENT {
+			if p.mode&ParseComments == 0 {
+				continue
+			}
+		}
+		break
+	}
+	p.peekValid = true
+	return p.peekTok
 }
 
 // Consume a comment and return it and the line on which it ends.
@@ -1891,7 +1927,33 @@ func (p *parser) parseExpr() ast.Expr {
 		defer un(trace(p, "Expression"))
 	}
 
-	return p.parseBinaryExpr(nil, token.LowestPrec+1)
+	x := p.parseBinaryExpr(nil, token.LowestPrec+1)
+
+	// Ternary operator: cond ? then : else
+	// Disambiguate from the statement-suffix ? (QuestionStmt / error propagation):
+	// - statement-suffix ? is followed by a newline (SEMICOLON) or EOF
+	// - ternary ? is followed by an expression
+	if p.tok == token.QUESTION {
+		next := p.peekNextToken()
+		isTernary := next != token.SEMICOLON && next != token.EOF &&
+			next != token.RBRACE && next != token.RPAREN && next != token.RBRACK
+		if isTernary {
+			question := p.pos
+			p.next() // consume ?
+			then := p.parseExpr()
+			colon := p.expect(token.COLON)
+			els := p.parseExpr()
+			return &ast.TernaryExpr{
+				Cond:     x,
+				Question: question,
+				Then:     then,
+				Colon:    colon,
+				Else:     els,
+			}
+		}
+	}
+
+	return x
 }
 
 func (p *parser) parseRhs() ast.Expr {

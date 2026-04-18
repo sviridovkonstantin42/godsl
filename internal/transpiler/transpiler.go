@@ -186,7 +186,7 @@ func (t *Transpiler) transpileStmt(stmt ast.Stmt) ast.Stmt {
 		return &ast.IfStmt{
 			If:   s.If,
 			Init: s.Init,
-			Cond: s.Cond,
+			Cond: t.transpileExpr(s.Cond),
 			Body: &ast.BlockStmt{
 				List: t.transpileStmts(s.Body.List),
 			},
@@ -196,16 +196,182 @@ func (t *Transpiler) transpileStmt(stmt ast.Stmt) ast.Stmt {
 		return &ast.ForStmt{
 			For:  s.For,
 			Init: s.Init,
-			Cond: s.Cond,
+			Cond: t.transpileExpr(s.Cond),
 			Post: s.Post,
 			Body: &ast.BlockStmt{
 				List: t.transpileStmts(s.Body.List),
 			},
 		}
+	case *ast.AssignStmt:
+		newLhs := make([]ast.Expr, len(s.Lhs))
+		for i, e := range s.Lhs {
+			newLhs[i] = t.transpileExpr(e)
+		}
+		newRhs := make([]ast.Expr, len(s.Rhs))
+		for i, e := range s.Rhs {
+			newRhs[i] = t.transpileExpr(e)
+		}
+		return &ast.AssignStmt{Lhs: newLhs, TokPos: s.TokPos, Tok: s.Tok, Rhs: newRhs}
+	case *ast.ExprStmt:
+		return &ast.ExprStmt{X: t.transpileExpr(s.X)}
+	case *ast.ReturnStmt:
+		newResults := make([]ast.Expr, len(s.Results))
+		for i, e := range s.Results {
+			newResults[i] = t.transpileExpr(e)
+		}
+		return &ast.ReturnStmt{Return: s.Return, Results: newResults}
+	case *ast.SendStmt:
+		return &ast.SendStmt{Chan: t.transpileExpr(s.Chan), Arrow: s.Arrow, Value: t.transpileExpr(s.Value)}
 	case *ast.ThrowStmt:
 		return t.transpileThrowStmt(s)
 	default:
 		return stmt
+	}
+}
+
+// transpileExpr рекурсивно обходит выражение, заменяя TernaryExpr на IIFE.
+func (t *Transpiler) transpileExpr(expr ast.Expr) ast.Expr {
+	if expr == nil {
+		return nil
+	}
+	switch x := expr.(type) {
+	case *ast.TernaryExpr:
+		return t.transpileTernaryExpr(x)
+	case *ast.BinaryExpr:
+		newX := t.transpileExpr(x.X)
+		newY := t.transpileExpr(x.Y)
+		if newX == x.X && newY == x.Y {
+			return x
+		}
+		return &ast.BinaryExpr{X: newX, OpPos: x.OpPos, Op: x.Op, Y: newY}
+	case *ast.UnaryExpr:
+		newX := t.transpileExpr(x.X)
+		if newX == x.X {
+			return x
+		}
+		return &ast.UnaryExpr{OpPos: x.OpPos, Op: x.Op, X: newX}
+	case *ast.StarExpr:
+		newX := t.transpileExpr(x.X)
+		if newX == x.X {
+			return x
+		}
+		return &ast.StarExpr{Star: x.Star, X: newX}
+	case *ast.ParenExpr:
+		newX := t.transpileExpr(x.X)
+		if newX == x.X {
+			return x
+		}
+		return &ast.ParenExpr{Lparen: x.Lparen, X: newX, Rparen: x.Rparen}
+	case *ast.CallExpr:
+		changed := false
+		newFun := t.transpileExpr(x.Fun)
+		if newFun != x.Fun {
+			changed = true
+		}
+		newArgs := make([]ast.Expr, len(x.Args))
+		for i, arg := range x.Args {
+			newArgs[i] = t.transpileExpr(arg)
+			if newArgs[i] != arg {
+				changed = true
+			}
+		}
+		if !changed {
+			return x
+		}
+		return &ast.CallExpr{Fun: newFun, Lparen: x.Lparen, Args: newArgs, Ellipsis: x.Ellipsis, Rparen: x.Rparen}
+	case *ast.IndexExpr:
+		newX := t.transpileExpr(x.X)
+		newIdx := t.transpileExpr(x.Index)
+		if newX == x.X && newIdx == x.Index {
+			return x
+		}
+		return &ast.IndexExpr{X: newX, Lbrack: x.Lbrack, Index: newIdx, Rbrack: x.Rbrack}
+	case *ast.SliceExpr:
+		newX := t.transpileExpr(x.X)
+		newLow := t.transpileExpr(x.Low)
+		newHigh := t.transpileExpr(x.High)
+		newMax := t.transpileExpr(x.Max)
+		if newX == x.X && newLow == x.Low && newHigh == x.High && newMax == x.Max {
+			return x
+		}
+		return &ast.SliceExpr{X: newX, Lbrack: x.Lbrack, Low: newLow, High: newHigh, Max: newMax, Slice3: x.Slice3, Rbrack: x.Rbrack}
+	case *ast.KeyValueExpr:
+		newKey := t.transpileExpr(x.Key)
+		newVal := t.transpileExpr(x.Value)
+		if newKey == x.Key && newVal == x.Value {
+			return x
+		}
+		return &ast.KeyValueExpr{Key: newKey, Colon: x.Colon, Value: newVal}
+	case *ast.CompositeLit:
+		changed := false
+		newElts := make([]ast.Expr, len(x.Elts))
+		for i, elt := range x.Elts {
+			newElts[i] = t.transpileExpr(elt)
+			if newElts[i] != elt {
+				changed = true
+			}
+		}
+		if !changed {
+			return x
+		}
+		return &ast.CompositeLit{Type: x.Type, Lbrace: x.Lbrace, Elts: newElts, Rbrace: x.Rbrace}
+	case *ast.SelectorExpr:
+		newX := t.transpileExpr(x.X)
+		if newX == x.X {
+			return x
+		}
+		return &ast.SelectorExpr{X: newX, Sel: x.Sel}
+	default:
+		return expr
+	}
+}
+
+// transpileTernaryExpr преобразует cond ? then : else в:
+//
+//	func() any { if cond { return then }; return else }()
+func (t *Transpiler) transpileTernaryExpr(x *ast.TernaryExpr) ast.Expr {
+	cond := t.transpileExpr(x.Cond)
+	then := t.transpileExpr(x.Then)
+	els := t.transpileExpr(x.Else)
+
+	return &ast.CallExpr{
+		Fun: &ast.FuncLit{
+			Type: &ast.FuncType{
+				Func:   token.NoPos,
+				Params: &ast.FieldList{},
+				Results: &ast.FieldList{
+					List: []*ast.Field{{
+						Type: &ast.Ident{NamePos: token.NoPos, Name: "any"},
+					}},
+				},
+			},
+			Body: &ast.BlockStmt{
+				Lbrace: token.NoPos,
+				List: []ast.Stmt{
+					&ast.IfStmt{
+						If:   token.NoPos,
+						Cond: cond,
+						Body: &ast.BlockStmt{
+							Lbrace: token.NoPos,
+							List: []ast.Stmt{
+								&ast.ReturnStmt{
+									Return:  token.NoPos,
+									Results: []ast.Expr{then},
+								},
+							},
+							Rbrace: token.NoPos,
+						},
+					},
+					&ast.ReturnStmt{
+						Return:  token.NoPos,
+						Results: []ast.Expr{els},
+					},
+				},
+				Rbrace: token.NoPos,
+			},
+		},
+		Lparen: token.NoPos,
+		Rparen: token.NoPos,
 	}
 }
 
@@ -354,10 +520,10 @@ func (t *Transpiler) transpileTryCatchOnly(tryStmt *ast.TryStmt) []ast.Stmt {
 	for _, stmt := range tryStmt.Body.List {
 		if ec, ok := stmt.(*ast.ErrCheckStmt); ok {
 			// @errcheck — синтаксическая аннотация
-			result = append(result, ec.Stmt)
+			result = append(result, t.transpileStmt(ec.Stmt))
 			result = append(result, t.createErrorCheck(tryStmt.Catches))
 		} else {
-			result = append(result, stmt)
+			result = append(result, t.transpileStmt(stmt))
 			if t.hasErrCheckComment(stmt) {
 				// //@errcheck — старый комментарий-синтаксис
 				result = append(result, t.createErrorCheck(tryStmt.Catches))
@@ -383,10 +549,10 @@ func (t *Transpiler) transpileTryCatchFinally(tryStmt *ast.TryStmt) []ast.Stmt {
 	var iifeBody []ast.Stmt
 	for _, stmt := range tryStmt.Body.List {
 		if ec, ok := stmt.(*ast.ErrCheckStmt); ok {
-			iifeBody = append(iifeBody, ec.Stmt)
+			iifeBody = append(iifeBody, t.transpileStmt(ec.Stmt))
 			iifeBody = append(iifeBody, t.createErrorCheckIIFE(tryStmt.Catches, catchesHaveReturn))
 		} else {
-			iifeBody = append(iifeBody, stmt)
+			iifeBody = append(iifeBody, t.transpileStmt(stmt))
 			if t.hasErrCheckComment(stmt) {
 				iifeBody = append(iifeBody, t.createErrorCheckIIFE(tryStmt.Catches, catchesHaveReturn))
 			}

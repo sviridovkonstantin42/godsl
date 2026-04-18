@@ -1,0 +1,57 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+)
+
+type Connection struct {
+	addr   string
+	closed bool
+}
+
+func (c *Connection) Close() {
+	c.closed = true
+	fmt.Println("Connection closed:", c.addr)
+}
+
+func openConnection(addr string) (*Connection, error) {
+	if addr == "" {
+		return nil, errors.New("empty address")
+	}
+	fmt.Println("Connection opened:", addr)
+	return &Connection{addr: addr}, nil
+}
+
+func query(conn *Connection) (string, error) {
+	if conn.closed {
+		return "", errors.New("connection is closed")
+	}
+	return "SELECT result", nil
+}
+
+func runQuery(addr string) {
+	conn, err := openConnection(addr)
+	if err != nil {
+		fmt.Println("Failed to open connection:", err)
+		return
+	}
+
+	try {
+		@errcheck
+		result, err := query(conn)
+		fmt.Println("Query result:", result)
+	} catch {
+		fmt.Println("Query failed:", err)
+	} finally {
+		conn.Close()
+	}
+}
+
+func main() {
+	fmt.Println("--- Successful query ---")
+	runQuery("db.example.com:5432")
+
+	fmt.Println("\n--- Failed connection ---")
+	runQuery("")
+}

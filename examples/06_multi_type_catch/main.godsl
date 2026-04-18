@@ -1,0 +1,47 @@
+package main
+
+import (
+	"fmt"
+)
+
+type ErrTimeout struct{ After int }
+type ErrNetwork struct{ Msg string }
+type ErrDisk struct{ Path string }
+
+func (e ErrTimeout) Error() string { return fmt.Sprintf("timeout after %ds", e.After) }
+func (e ErrNetwork) Error() string { return "network error: " + e.Msg }
+func (e ErrDisk) Error() string    { return "disk error at: " + e.Path }
+
+func riskyOp(kind string) (string, error) {
+	switch kind {
+	case "timeout":
+		return "", ErrTimeout{After: 30}
+	case "network":
+		return "", ErrNetwork{Msg: "connection refused"}
+	case "disk":
+		return "", ErrDisk{Path: "/var/data"}
+	}
+	return "ok", nil
+}
+
+func handle(kind string) {
+	fmt.Printf("[%s] ", kind)
+	try {
+		@errcheck
+		res, err := riskyOp(kind)
+		fmt.Println("result:", res)
+	} catch(ErrTimeout | ErrNetwork) {
+		fmt.Println("transient error (retry later):", err)
+	} catch(e ErrDisk) {
+		fmt.Printf("fatal disk error at '%s', aborting\n", e.Path)
+	} catch {
+		fmt.Println("unexpected error:", err)
+	}
+}
+
+func main() {
+	handle("ok")
+	handle("timeout")
+	handle("network")
+	handle("disk")
+}

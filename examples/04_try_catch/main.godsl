@@ -1,0 +1,65 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+)
+
+type NotFoundError struct {
+	Resource string
+}
+
+func (e NotFoundError) Error() string {
+	return fmt.Sprintf("not found: %s", e.Resource)
+}
+
+type PermissionError struct {
+	User string
+}
+
+func (e PermissionError) Error() string {
+	return fmt.Sprintf("permission denied for user: %s", e.User)
+}
+
+func fetchResource(id int) (string, error) {
+	if id == 0 {
+		return "", NotFoundError{Resource: "item#0"}
+	}
+	if id < 0 {
+		return "", PermissionError{User: "guest"}
+	}
+	return fmt.Sprintf("resource-%d", id), nil
+}
+
+func main() {
+	// try-catch с типизированным перехватом
+	try {
+		@errcheck
+		res, err := fetchResource(0)
+		fmt.Println("Got:", res)
+	} catch(NotFoundError) {
+		fmt.Println("Caught NotFoundError:", err)
+	} catch(PermissionError) {
+		fmt.Println("Caught PermissionError:", err)
+	} catch {
+		fmt.Println("Caught unknown error:", err)
+	}
+
+	// catch с переменной
+	try {
+		@errcheck
+		res, err := fetchResource(-1)
+		fmt.Println("Got:", res)
+	} catch(e PermissionError) {
+		fmt.Printf("Access denied for '%s'\n", e.User)
+	}
+
+	// Успешный случай
+	try {
+		@errcheck
+		res, err := fetchResource(42)
+		fmt.Println("Got:", res)
+	} catch {
+		fmt.Println("Error:", err)
+	}
+}

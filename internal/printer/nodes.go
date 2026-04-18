@@ -834,6 +834,17 @@ func (p *printer) expr1(expr ast.Expr, prec1, depth int) {
 		p.print(token.COLON, blank)
 		p.expr(x.Value)
 
+	case *ast.TernaryExpr:
+		p.expr1(x.Cond, token.LowestPrec+1, depth)
+		p.print(blank)
+		p.setPos(x.Question)
+		p.print(token.QUESTION, blank)
+		p.expr1(x.Then, token.LowestPrec+1, depth)
+		p.print(blank)
+		p.setPos(x.Colon)
+		p.print(token.COLON, blank)
+		p.expr1(x.Else, token.LowestPrec+1, depth)
+
 	case *ast.StarExpr:
 		const prec = token.UnaryPrec
 		if prec < prec1 {

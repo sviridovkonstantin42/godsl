@@ -1,0 +1,27 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+)
+
+func openDB(dsn string) (string, error) {
+	if dsn == "" {
+		return "", errors.New("DSN is empty")
+	}
+	return "db:" + dsn, nil
+}
+
+func setup() error {
+	return errors.New("setup failed")
+}
+
+func main() {
+	// must с присваиванием: паника при ошибке вместо возврата
+	db := must openDB("localhost:5432/myapp")
+	fmt.Println("Connected:", db)
+
+	// must с выражением: паника при ошибке
+	fmt.Println("About to panic if setup fails...")
+	must setup()
+}
