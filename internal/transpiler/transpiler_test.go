@@ -1247,3 +1247,124 @@ func bar() (int, error) { return 0, nil }
 	assertContains(t, out, `"fail"`)
 	assertNotContains(t, out, "?")
 }
+
+// ─── ternary type inference ───────────────────────────────────────────────────
+
+func TestTranspileFile_Ternary_TypeInference_StringLiterals(t *testing.T) {
+	src := `package main
+
+func foo(flag bool) any {
+	return flag ? "yes" : "no"
+}
+`
+	out := transpileOK(t, src)
+	assertValidGo(t, out)
+	assertContains(t, out, "func() string")
+	assertNotContains(t, out, "func() any")
+}
+
+func TestTranspileFile_Ternary_TypeInference_IntLiterals(t *testing.T) {
+	src := `package main
+
+func foo(x int) any {
+	return x > 0 ? 1 : -1
+}
+`
+	out := transpileOK(t, src)
+	assertValidGo(t, out)
+	assertContains(t, out, "func() int")
+	assertNotContains(t, out, "func() any")
+}
+
+func TestTranspileFile_Ternary_TypeInference_FloatLiterals(t *testing.T) {
+	src := `package main
+
+func foo(flag bool) any {
+	return flag ? 1.5 : 2.5
+}
+`
+	out := transpileOK(t, src)
+	assertValidGo(t, out)
+	assertContains(t, out, "func() float64")
+}
+
+func TestTranspileFile_Ternary_TypeInference_BoolIdents(t *testing.T) {
+	src := `package main
+
+func foo(x int) any {
+	return x > 0 ? true : false
+}
+`
+	out := transpileOK(t, src)
+	assertValidGo(t, out)
+	assertContains(t, out, "func() bool")
+}
+
+func TestTranspileFile_Ternary_TypeInference_OneLiteralBranch(t *testing.T) {
+	// then — литерал, else — переменная: используем тип литерала
+	src := `package main
+
+func foo(x int, msg string) any {
+	return x > 0 ? "default" : msg
+}
+`
+	out := transpileOK(t, src)
+	assertValidGo(t, out)
+	assertContains(t, out, "func() string")
+}
+
+func TestTranspileFile_Ternary_TypeInference_ReturnContext_Int(t *testing.T) {
+	// Функция возвращает int — используем как подсказку когда ветки не содержат литералов
+	src := `package main
+
+func max(a, b int) int {
+	return a > b ? a : b
+}
+`
+	out := transpileOK(t, src)
+	assertValidGo(t, out)
+	assertContains(t, out, "func() int")
+	assertNotContains(t, out, "func() any")
+}
+
+func TestTranspileFile_Ternary_TypeInference_ReturnContext_String(t *testing.T) {
+	src := `package main
+
+func greet(formal bool) string {
+	return formal ? greeting() : shortGreet()
+}
+
+func greeting() string     { return "Good day" }
+func shortGreet() string   { return "Hi" }
+`
+	out := transpileOK(t, src)
+	assertValidGo(t, out)
+	assertContains(t, out, "func() string")
+}
+
+func TestTranspileFile_Ternary_TypeInference_FallbackToAny(t *testing.T) {
+	// Возвращаемый тип any — нет подсказки, ветки без литералов → any
+	src := `package main
+
+func pick(flag bool, a, b any) any {
+	return flag ? a : b
+}
+`
+	out := transpileOK(t, src)
+	assertValidGo(t, out)
+	assertContains(t, out, "func() any")
+}
+
+func TestTranspileFile_Ternary_TypeInference_NegativeIntLiteral(t *testing.T) {
+	src := `package main
+
+func abs(x int) int {
+	return x >= 0 ? x : -x
+}
+`
+	out := transpileOK(t, src)
+	assertValidGo(t, out)
+	// -x — унарный минус не литерал, но return context даёт int
+	assertContains(t, out, "func() int")
+	assertNotContains(t, out, "func() any")
+}

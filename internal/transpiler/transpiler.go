@@ -19,6 +19,7 @@ type Transpiler struct {
 	fset             *token.FileSet
 	comments         []*ast.CommentGroup
 	errcheckComments map[token.Pos]bool // Позиции комментариев @errcheck для удаления
+	returnTypeHint   ast.Expr           // тип первого возвращаемого значения текущей функции
 }
 
 // NewTranspiler создает новый экземпляр транспилятора
@@ -137,6 +138,10 @@ func (t *Transpiler) transpileFuncDecl(funcDecl *ast.FuncDecl) *ast.FuncDecl {
 		return funcDecl
 	}
 
+	prev := t.returnTypeHint
+	t.returnTypeHint = extractFirstReturnType(funcDecl.Type)
+	defer func() { t.returnTypeHint = prev }()
+
 	newBody := &ast.BlockStmt{}
 	newBody.List = t.transpileStmts(funcDecl.Body.List)
 
@@ -147,6 +152,20 @@ func (t *Transpiler) transpileFuncDecl(funcDecl *ast.FuncDecl) *ast.FuncDecl {
 		Type: funcDecl.Type,
 		Body: newBody,
 	}
+}
+
+// extractFirstReturnType возвращает тип первого не-error результата функции.
+// Для func() (int, error) → *ast.Ident{Name:"int"}.
+// Для func() error → nil (error не используем как подсказку для тернарного).
+func extractFirstReturnType(funcType *ast.FuncType) ast.Expr {
+	if funcType == nil || funcType.Results == nil || len(funcType.Results.List) == 0 {
+		return nil
+	}
+	first := funcType.Results.List[0].Type
+	if ident, ok := first.(*ast.Ident); ok && ident.Name == "error" {
+		return nil
+	}
+	return first
 }
 
 // transpileStmts транспилирует список statements
@@ -328,11 +347,19 @@ func (t *Transpiler) transpileExpr(expr ast.Expr) ast.Expr {
 
 // transpileTernaryExpr преобразует cond ? then : else в:
 //
-//	func() any { if cond { return then }; return else }()
+//	func() T { if cond { return then }; return else }()
+//
+// Тип T выводится из ветвей (литералы) или из контекста возвращаемого типа
+// текущей функции. Если вывести тип невозможно, используется any.
 func (t *Transpiler) transpileTernaryExpr(x *ast.TernaryExpr) ast.Expr {
 	cond := t.transpileExpr(x.Cond)
 	then := t.transpileExpr(x.Then)
 	els := t.transpileExpr(x.Else)
+
+	retType := t.inferTernaryReturnType(x.Then, x.Else)
+	if retType == nil {
+		retType = &ast.Ident{NamePos: token.NoPos, Name: "any"}
+	}
 
 	return &ast.CallExpr{
 		Fun: &ast.FuncLit{
@@ -341,7 +368,7 @@ func (t *Transpiler) transpileTernaryExpr(x *ast.TernaryExpr) ast.Expr {
 				Params: &ast.FieldList{},
 				Results: &ast.FieldList{
 					List: []*ast.Field{{
-						Type: &ast.Ident{NamePos: token.NoPos, Name: "any"},
+						Type: retType,
 					}},
 				},
 			},
@@ -373,6 +400,64 @@ func (t *Transpiler) transpileTernaryExpr(x *ast.TernaryExpr) ast.Expr {
 		Lparen: token.NoPos,
 		Rparen: token.NoPos,
 	}
+}
+
+// inferTernaryReturnType выводит тип возвращаемого значения тернарного оператора.
+//
+// Порядок приоритетов:
+//  1. Оба литерала одного вида (int/float/string/rune/bool) → этот тип.
+//  2. Один из литералов известного типа → его тип.
+//  3. Контекст: возвращаемый тип текущей функции (t.returnTypeHint).
+//  4. Иначе → nil (будет подставлено any).
+func (t *Transpiler) inferTernaryReturnType(then, els ast.Expr) ast.Expr {
+	thenType := inferLiteralType(then)
+	elsType := inferLiteralType(els)
+
+	if thenType != nil && elsType != nil {
+		// Оба типа выведены из литералов: используем тип ветки then
+		// (если ветки конфликтуют, компилятор Go всё равно выдаст ошибку).
+		return thenType
+	}
+	if thenType != nil {
+		return thenType
+	}
+	if elsType != nil {
+		return elsType
+	}
+	// Если ветки не содержат литералов — используем подсказку из контекста функции.
+	return t.returnTypeHint
+}
+
+// inferLiteralType пытается вывести Go-тип выражения по его синтаксису.
+// Работает без таблицы символов: распознаёт литералы, булевы константы и
+// унарный минус/NOT применённый к ним.
+// Возвращает nil, если тип определить невозможно.
+func inferLiteralType(expr ast.Expr) ast.Expr {
+	switch e := expr.(type) {
+	case *ast.BasicLit:
+		switch e.Kind {
+		case token.INT:
+			return &ast.Ident{NamePos: token.NoPos, Name: "int"}
+		case token.FLOAT:
+			return &ast.Ident{NamePos: token.NoPos, Name: "float64"}
+		case token.STRING:
+			return &ast.Ident{NamePos: token.NoPos, Name: "string"}
+		case token.CHAR:
+			return &ast.Ident{NamePos: token.NoPos, Name: "rune"}
+		}
+	case *ast.Ident:
+		if e.Name == "true" || e.Name == "false" {
+			return &ast.Ident{NamePos: token.NoPos, Name: "bool"}
+		}
+	case *ast.UnaryExpr:
+		// -1, -3.14, ^0xff, !flag
+		if e.Op == token.SUB || e.Op == token.XOR || e.Op == token.NOT {
+			return inferLiteralType(e.X)
+		}
+	case *ast.ParenExpr:
+		return inferLiteralType(e.X)
+	}
+	return nil
 }
 
 // transpileThrowStmt транспилирует throw <expr> → return <expr>

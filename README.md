@@ -419,50 +419,90 @@ func runQuery(conn *Connection) {
 
 ### 6. Тернарный оператор `? :`
 
-`cond ? then : else` транспилируется в анонимную функцию (IIFE), возвращающую `any`.
+`cond ? then : else` транспилируется в анонимную функцию (IIFE). Транспилятор **автоматически выводит тип** возвращаемого значения — точный тип вместо `any`.
+
+#### Правила вывода типа (приоритет по убыванию)
+
+| Условие                                               | Выведенный тип                                            |
+| ----------------------------------------------------- | --------------------------------------------------------- |
+| Обе ветки — литералы одного вида                      | тип литерала (`string`, `int`, `float64`, `rune`, `bool`) |
+| Одна ветка — литерал, другая — произвольное выражение | тип литерала                                              |
+| Ветки не содержат литералов                           | возвращаемый тип текущей функции                          |
+| Тип определить невозможно                             | `any`                                                     |
+
+#### Примеры с выводом типов
 
 ```godsl
+// Обе ветки — строковые литералы → string
 result := x > 0 ? "positive" : "non-positive"
-max := a > b ? a : b
+
+// Функция возвращает int → int (ветки не литералы)
+func max(a, b int) int {
+    return a > b ? a : b
+}
+
+// Одна ветка — литерал → string
+func label(x int, custom string) string {
+    return x > 0 ? "default" : custom
+}
 ```
 
 **Результат транспиляции:**
 
 ```go
-result := func() any {
+// string — оба строковых литерала
+result := func() string {
     if x > 0 {
         return "positive"
     }
     return "non-positive"
 }()
-max := func() any {
-    if a > b {
-        return a
-    }
-    return b
-}()
+
+// int — из возвращаемого типа функции
+func max(a, b int) int {
+    return func() int {
+        if a > b {
+            return a
+        }
+        return b
+    }()
+}
+
+// string — из ветки-литерала
+func label(x int, custom string) string {
+    return func() string {
+        if x > 0 {
+            return "default"
+        }
+        return custom
+    }()
+}
 ```
 
 Вложенный тернарный оператор:
 
 ```godsl
-label := x > 0 ? "positive" : x < 0 ? "negative" : "zero"
+func classify(x int) string {
+    return x > 0 ? "positive" : x < 0 ? "negative" : "zero"
+}
 ```
 
-**Результат:**
+**Результат** (тип `string` — из возвращаемого типа функции и строковых литералов):
 
 ```go
-label := func() any {
-    if x > 0 {
-        return "positive"
-    }
-    return func() any {
-        if x < 0 {
-            return "negative"
+func classify(x int) string {
+    return func() string {
+        if x > 0 {
+            return "positive"
         }
-        return "zero"
+        return func() string {
+            if x < 0 {
+                return "negative"
+            }
+            return "zero"
+        }()
     }()
-}()
+}
 ```
 
 ---
@@ -782,9 +822,10 @@ func classify(x int) any {
 }
 ```
 
-**Результат транспиляции** `build/examples/07_ternary/main.go`:
+**Результат транспиляции** `build/examples/07_ternary/main.go` (типы выводятся автоматически):
 
 ```go
+// abs: return type = any, ветки — идентификатор и унарный минус → any (нет литералов)
 func abs(x int) any {
     return func() any {
         if x >= 0 {
@@ -794,12 +835,13 @@ func abs(x int) any {
     }()
 }
 
+// classify: return type = any, обе ветки — строковые литералы → string
 func classify(x int) any {
-    return func() any {
+    return func() string {
         if x > 0 {
             return "positive"
         }
-        return func() any {
+        return func() string {
             if x < 0 {
                 return "negative"
             }
